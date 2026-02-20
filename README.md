@@ -1,4 +1,14 @@
-# Senate
+# 🏛️ Senate
+
+*The Ecclesia convenes. Multiple voices. One verdict. Binding.*
+
+---
+
+In Athens, the Ecclesia was where citizens gathered to debate matters that affected everyone. Not a rubber stamp. Not a suggestion box. A deliberation — messy, argumentative, and binding. When the Ecclesia voted, the city moved. You didn't get to relitigate because you slept in.
+
+The Senate works the same way, except the citizens are AI agents and the matters at hand are architectural decisions, rule changes, and system evolution. When a question is too important for one agent's judgment — should Centurion require 70% coverage? Should Truthsayer amend a rule? — it goes to the Ecclesia. Multiple perspectives are spawned. They argue. A judge synthesizes the debate into a verdict. The verdict is recorded as precedent. The precedent is searchable. And the decision gets handed off as real work via beads.
+
+No backroom deals. No revisionism. If you want to overturn a verdict, you file a new case and argue it on the merits. The Ecclesia has a long memory and a short tolerance for re-litigation.
 
 Senate (Ecclesia) is the Agora's multi-agent deliberation tool for high-impact decisions.
 
@@ -68,3 +78,15 @@ senate precedent search --query <text> [--limit N] [--type TYPE] [--verdict DECI
 senate handoff --case-id <id> [--workspace <path>]
 senate version
 ```
+
+## Part of the Agora
+
+Senate was forged in **[Athena's Agora](https://github.com/Perttulands/athena-workspace)** — an autonomous coding system where AI agents build software and the hard decisions go through deliberation, not diktat.
+
+[Argus](https://github.com/Perttulands/argus) watches the server. [Truthsayer](https://github.com/Perttulands/truthsayer) watches the code. [Oathkeeper](https://github.com/Perttulands/oathkeeper) watches the promises. [Relay](https://github.com/Perttulands/relay) carries the messages. Senate decides what the rules should be.
+
+The [mythology](https://github.com/Perttulands/athena-workspace/blob/main/mythology.md) has the full story.
+
+## License
+
+MIT
