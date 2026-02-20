@@ -164,7 +164,11 @@ func (s *Store) Search(query string, opts SearchOptions) ([]Record, error) {
 		if len(queryTokens) > 0 && score == 0 {
 			continue
 		}
-		tm, _ := time.Parse(time.RFC3339, rec.VerdictAt)
+		tm, err := time.Parse(time.RFC3339, rec.VerdictAt)
+		if err != nil {
+			// Defensive guard: do not include malformed timestamps in ranking.
+			continue
+		}
 		results = append(results, scored{record: rec, score: score, time: tm})
 	}
 
