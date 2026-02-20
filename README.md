@@ -1,5 +1,8 @@
 # 🏛️ Senate
 
+![Senate](images/acropolis.png)
+
+
 *The Ecclesia convenes. Multiple voices. One verdict. Binding.*
 
 ---
