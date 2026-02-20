@@ -1,0 +1,9 @@
+# Build artifacts
+senate
+coverage.out
+
+# Runtime state
+state/
+
+# IDE
+.DS_Store
