@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -71,7 +70,9 @@ func (e *Engine) Deliberate(c core.Case, now time.Time) (core.Transcript, core.V
 	}
 
 	// Phase 5: Synthesize verdict with real judge - no fallback
-	verdict, err := JudgeSynthesize(context.Background(), c, initial, challenges, final)
+	// TODO: Accept context as parameter for proper cancellation support
+	ctx := context.TODO() // Will be replaced when Deliberate accepts context
+	verdict, err := JudgeSynthesize(ctx, c, initial, challenges, final)
 	if err != nil {
 		return core.Transcript{}, core.Verdict{}, fmt.Errorf("judge synthesis failed: %w", err)
 	}
@@ -756,4 +757,17 @@ func analyzePrecedents(precedents []core.PrecedentSummary) string {
 	}
 
 	return ""
+}
+// countDecisions counts how many positions have each decision type
+func countDecisions(positions []core.Position) map[core.Decision]int {
+	counts := map[core.Decision]int{
+		core.DecisionApprove: 0,
+		core.DecisionReject:  0,
+		core.DecisionAmend:   0,
+		core.DecisionDefer:   0,
+	}
+	for _, p := range positions {
+		counts[p.Stance]++
+	}
+	return counts
 }
