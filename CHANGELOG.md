@@ -6,8 +6,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
 ## [Unreleased]
 
+## [2026-02-22]
+
+### Added
+- `senate health` command to verify system prerequisites before deliberation
+- Real senator spawning via tmux + Claude CLI (replaced simulated deliberation)
+- Clear prerequisite checking with detailed error messages
+- Senator session management with structured response parsing
+
 ### Changed
+- **BREAKING**: Removed all fallback to simulated deliberation - Senate now requires real Claude senators
+- Deliberation fails immediately and clearly if prerequisites aren't met
+- No silent degradation - system explicitly reports what's wrong
 - README: restored mythology intro (The Ecclesia), character description, "Part of the Agora" section
+
+### Removed
+- Simulated/scripted deliberation from production code (moved to test files only)
+- All fallback paths that could silently degrade to keyword-based decisions
+- Mixed real/simulated deliberation modes
 
 ## [2026-02-20]
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -37,6 +38,8 @@ func Run(args []string) int {
 	case "version":
 		fmt.Println("senate", Version)
 		return 0
+	case "health":
+		return cmdHealth(cmdArgs)
 	case "deliberate":
 		return cmdDeliberate(cmdArgs)
 	case "precedent":
@@ -50,6 +53,108 @@ func Run(args []string) int {
 		usage()
 		return 1
 	}
+}
+
+func cmdHealth(args []string) int {
+	verbose := flagBool(args, "--verbose")
+	hasError := false
+
+	// Check Claude CLI
+	fmt.Print("Claude CLI: ")
+	if path, err := exec.LookPath("claude"); err != nil {
+		fmt.Println("❌ NOT FOUND")
+		hasError = true
+		if verbose {
+			fmt.Printf("  Error: %v\n", err)
+			fmt.Println("  Install: https://docs.anthropic.com/claude/docs/claude-cli")
+		}
+	} else {
+		fmt.Println("✓")
+		if verbose {
+			fmt.Printf("  Path: %s\n", path)
+		}
+	}
+
+	// Check tmux
+	fmt.Print("Tmux: ")
+	if path, err := exec.LookPath("tmux"); err != nil {
+		fmt.Println("❌ NOT FOUND")
+		hasError = true
+		if verbose {
+			fmt.Printf("  Error: %v\n", err)
+			fmt.Println("  Install: sudo apt-get install tmux")
+		}
+	} else {
+		fmt.Println("✓")
+		if verbose {
+			fmt.Printf("  Path: %s\n", path)
+		}
+	}
+
+	// Check tmux socket
+	const tmuxSocket = "/tmp/tmux-senate.sock"
+	fmt.Print("Tmux socket: ")
+	socketDir := filepath.Dir(tmuxSocket)
+	if info, err := os.Stat(socketDir); err != nil {
+		fmt.Printf("❌ DIR NOT ACCESSIBLE (%s)\n", socketDir)
+		hasError = true
+		if verbose {
+			fmt.Printf("  Error: %v\n", err)
+		}
+	} else if !info.IsDir() {
+		fmt.Printf("❌ NOT A DIRECTORY (%s)\n", socketDir)
+		hasError = true
+	} else {
+		// Test tmux socket
+		cmd := exec.Command("tmux", "-S", tmuxSocket, "list-sessions")
+		if output, err := cmd.CombinedOutput(); err != nil {
+			if strings.Contains(string(output), "no server running") || strings.Contains(string(output), "no sessions") {
+				fmt.Println("✓")
+				if verbose {
+					fmt.Printf("  Socket: %s (no active sessions)\n", tmuxSocket)
+				}
+			} else {
+				fmt.Println("❌ SOCKET TEST FAILED")
+				hasError = true
+				if verbose {
+					fmt.Printf("  Error: %v\n", err)
+					fmt.Printf("  Output: %s\n", output)
+				}
+			}
+		} else {
+			fmt.Println("✓")
+			if verbose {
+				fmt.Printf("  Socket: %s\n", tmuxSocket)
+				fmt.Printf("  Active sessions:\n%s", output)
+			}
+		}
+	}
+
+	// Check bd (beads CLI)
+	fmt.Print("Beads CLI (bd): ")
+	if path, err := exec.LookPath("bd"); err != nil {
+		fmt.Println("⚠️  NOT FOUND (optional for handoff)")
+		if verbose {
+			fmt.Printf("  Error: %v\n", err)
+			fmt.Println("  Note: Required only for automatic verdict handoff")
+		}
+	} else {
+		fmt.Println("✓")
+		if verbose {
+			fmt.Printf("  Path: %s\n", path)
+		}
+	}
+
+	// Summary
+	fmt.Println()
+	if hasError {
+		fmt.Println("❌ Senate is NOT ready for real deliberation")
+		fmt.Println("Fix the issues above before running 'senate deliberate'")
+		return 1
+	}
+
+	fmt.Println("✅ Senate is ready for real deliberation")
+	return 0
 }
 
 func cmdDeliberate(args []string) int {
@@ -465,6 +570,7 @@ func usage() {
 	fmt.Print(`senate - multi-agent deliberation system
 
 COMMANDS:
+  senate health [--verbose]                     Check if Senate is ready for real deliberation
   senate deliberate --case <file> [flags]      Run deliberation and synthesize a binding verdict
   senate file-case [flags]                      File a new case to Senate
   senate precedent search --query <text>        Search stored verdict precedents
