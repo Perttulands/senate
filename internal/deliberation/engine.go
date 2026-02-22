@@ -69,9 +69,21 @@ func evaluateInitial(c core.Case, p Perspective) (core.Decision, string, string)
 	risk := tokenScore(c.Question+" "+c.Summary, []string{"security", "unsafe", "drop", "delete", "disable", "bypass", "without tests", "rollback"})
 	urgency := tokenScore(c.Question+" "+c.Summary, []string{"urgent", "blocker", "ship", "today", "immediately", "unblock"})
 	evidenceWeight := len(c.Evidence)
+	precedentWeight := len(c.Precedents)
+
+	// Check if precedents suggest a pattern
+	precedentLean := analyzePrecedents(c.Precedents)
 
 	switch p.Name {
 	case "pragmatist":
+		// If precedents strongly lean one way, pragmatist considers the practical pattern
+		if precedentWeight >= 2 && precedentLean != "" {
+			if precedentLean == string(core.DecisionApprove) {
+				return core.DecisionApprove, "Past cases show this approach works in practice.", "Follow established successful pattern."
+			} else if precedentLean == string(core.DecisionReject) {
+				return core.DecisionReject, "Past cases show this approach has failed repeatedly.", "Learn from previous failures."
+			}
+		}
 		if risk >= 2 {
 			return core.DecisionReject, "The change introduces high risk compared to delivery value.", "Risk reduction plan is missing."
 		}
@@ -80,6 +92,10 @@ func evaluateInitial(c core.Case, p Perspective) (core.Decision, string, string)
 		}
 		return core.DecisionAmend, "Direction is viable but needs tighter scope before execution.", "Define measurable acceptance criteria."
 	case "purist":
+		// Purist values consistency with precedent when it upholds standards
+		if precedentWeight >= 3 {
+			return core.DecisionAmend, "Precedents suggest refinement is needed to meet our standards.", "Align with established quality patterns."
+		}
 		if risk >= 1 {
 			return core.DecisionReject, "Correctness and safety guarantees are not strong enough for approval.", "Failure modes are under-specified."
 		}
@@ -88,6 +104,10 @@ func evaluateInitial(c core.Case, p Perspective) (core.Decision, string, string)
 		}
 		return core.DecisionAmend, "The proposal is directionally sound but requires stronger invariants.", "Specify exact rule boundaries."
 	case "skeptic":
+		// Skeptic questions whether current case differs from precedents
+		if precedentWeight > 0 && evidenceWeight == 0 {
+			return core.DecisionDefer, "Past verdicts exist but this case lacks specific evidence.", "Show how this differs from precedents."
+		}
 		if evidenceWeight == 0 {
 			return core.DecisionDefer, "The case lacks objective evidence and should not be bound yet.", "Gather incidents, diffs, or metrics first."
 		}
@@ -288,4 +308,32 @@ func uniqueFirstN(items []string, n int) []string {
 		}
 	}
 	return out
+}
+
+// analyzePrecedents examines past verdicts to identify patterns
+func analyzePrecedents(precedents []core.PrecedentSummary) string {
+	if len(precedents) == 0 {
+		return ""
+	}
+
+	counts := map[core.Decision]int{
+		core.DecisionApprove: 0,
+		core.DecisionReject:  0,
+		core.DecisionAmend:   0,
+		core.DecisionDefer:   0,
+	}
+
+	for _, p := range precedents {
+		counts[p.Verdict]++
+	}
+
+	// If 60% or more precedents lean one way, return that decision
+	threshold := int(float64(len(precedents)) * 0.6)
+	for decision, count := range counts {
+		if count >= threshold {
+			return string(decision)
+		}
+	}
+
+	return ""
 }

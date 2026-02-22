@@ -28,14 +28,23 @@ func (d Decision) Validate() error {
 
 // Case is a normalized Senate case file.
 type Case struct {
-	ID                string   `json:"id"`
-	Type              string   `json:"type"`
-	Summary           string   `json:"summary"`
-	Question          string   `json:"question"`
-	Evidence          []string `json:"evidence,omitempty"`
-	RequestedDecision string   `json:"requested_decision,omitempty"`
-	FiledAt           string   `json:"filed_at"`
-	FiledBy           string   `json:"filed_by,omitempty"`
+	ID                string             `json:"id"`
+	Type              string             `json:"type"`
+	Summary           string             `json:"summary"`
+	Question          string             `json:"question"`
+	Evidence          []string           `json:"evidence,omitempty"`
+	RequestedDecision string             `json:"requested_decision,omitempty"`
+	FiledAt           string             `json:"filed_at"`
+	FiledBy           string             `json:"filed_by,omitempty"`
+	Precedents        []PrecedentSummary `json:"precedents,omitempty"`
+}
+
+// PrecedentSummary is a condensed view of a precedent for senator context
+type PrecedentSummary struct {
+	CaseID    string   `json:"case_id"`
+	Verdict   Decision `json:"verdict"`
+	Summary   string   `json:"summary"`
+	Reasoning string   `json:"reasoning"`
 }
 
 func (c *Case) Normalize(now time.Time) {

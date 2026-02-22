@@ -115,3 +115,21 @@ func defaultWorkspaceDir() string {
 	}
 	return filepath.FromSlash("/home/chrote/athena/workspace")
 }
+
+// CreateBeadFromVerdict creates a Beads issue from a verdict.
+// This is an alias for CreateBeadForVerdict to match the requested function name.
+func CreateBeadFromVerdict(ctx context.Context, verdict core.Verdict) (string, error) {
+	// Check if bd CLI exists
+	if _, err := exec.LookPath("bd"); err != nil {
+		return "", fmt.Errorf("bd CLI not found: %w", err)
+	}
+
+	// Use the existing implementation
+	result, err := CreateBeadForVerdict(ctx, nil, "", verdict)
+	if err != nil {
+		return "", err
+	}
+
+	// Return just the BeadID as requested
+	return result.BeadID, nil
+}

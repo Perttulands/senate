@@ -216,6 +216,20 @@ func scoreRecord(rec Record, queryTokens []string) int {
 	return score
 }
 
+// SearchRelevantPrecedent finds precedents relevant to a case for senator context
+func (s *Store) SearchRelevantPrecedent(caseType string, keywords []string) ([]Record, error) {
+	// Combine keywords into a search query
+	query := strings.Join(keywords, " ")
+
+	// Search with case type filter and sensible limit
+	opts := SearchOptions{
+		Type:  caseType,
+		Limit: 5, // Top 5 most relevant precedents
+	}
+
+	return s.Search(query, opts)
+}
+
 func extractKeywords(text string) []string {
 	text = strings.ToLower(text)
 	replacer := strings.NewReplacer(

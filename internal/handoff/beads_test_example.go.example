@@ -1,0 +1,95 @@
+package handoff
+
+import (
+	"context"
+	"fmt"
+	"testing"
+
+	"github.com/Perttulands/senate/internal/core"
+)
+
+// Example usage of CreateBeadFromVerdict function
+func ExampleCreateBeadFromVerdict() {
+	// Example verdict matching the schema from requirements
+	verdict := core.Verdict{
+		CaseID:         "senate-001",
+		Verdict:        core.DecisionApprove, // "approved"
+		Reasoning:      "This change improves system reliability without introducing risks",
+		Implementation: "Update monitoring thresholds in config/alerts.yaml to reduce false positives",
+		Dissent:        "Minority suggests more conservative thresholds",
+		Summary:        "Adjust monitoring alert thresholds",
+		Type:           "rule_evolution",
+		Binding:        true, // Required for bead creation
+		Judge:          "claude-3-opus",
+		FiledAt:        "2024-01-15T10:00:00Z",
+		VerdictAt:      "2024-01-15T10:30:00Z",
+	}
+
+	ctx := context.Background()
+
+	// Call the function
+	beadID, err := CreateBeadFromVerdict(ctx, verdict)
+	if err != nil {
+		fmt.Printf("Error creating bead: %v\n", err)
+		return
+	}
+
+	fmt.Printf("Created bead with ID: %s\n", beadID)
+}
+
+// Test to verify the function handles different verdict types
+func TestCreateBeadFromVerdictCases(t *testing.T) {
+	testCases := []struct {
+		name        string
+		verdict     core.Verdict
+		expectError bool
+		expectSkip  bool
+	}{
+		{
+			name: "approved verdict creates bead",
+			verdict: core.Verdict{
+				CaseID:         "senate-002",
+				Verdict:        core.DecisionApprove,
+				Reasoning:      "Approved for implementation",
+				Implementation: "Implement feature X",
+				Summary:        "Add feature X",
+				Binding:        true,
+				Type:           "feature",
+			},
+			expectError: false,
+			expectSkip:  false,
+		},
+		{
+			name: "deferred verdict skips bead creation",
+			verdict: core.Verdict{
+				CaseID:         "senate-003",
+				Verdict:        core.DecisionDefer,
+				Reasoning:      "Need more information",
+				Implementation: "Gather requirements",
+				Summary:        "Feature Y proposal",
+				Binding:        true,
+				Type:           "feature",
+			},
+			expectError: false,
+			expectSkip:  true, // Deferred verdicts don't create beads
+		},
+		{
+			name: "non-binding verdict skips bead creation",
+			verdict: core.Verdict{
+				CaseID:         "senate-004",
+				Verdict:        core.DecisionApprove,
+				Reasoning:      "Advisory only",
+				Implementation: "Consider implementing",
+				Summary:        "Advisory recommendation",
+				Binding:        false, // Non-binding verdicts don't create beads
+				Type:           "feature",
+			},
+			expectError: false,
+			expectSkip:  true,
+		},
+	}
+
+	// Note: This is just an example structure.
+	// In actual tests, you would mock the Runner interface to avoid calling real bd commands.
+	fmt.Println("Test cases demonstrate how different verdicts are handled")
+}

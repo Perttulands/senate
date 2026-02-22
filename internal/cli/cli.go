@@ -78,6 +78,25 @@ func cmdDeliberate(args []string) int {
 		return 1
 	}
 
+	// Query relevant precedents before deliberation
+	prec := precedent.New(d.PrecedentIndexPath())
+	keywords := extractKeywords(c.Summary + " " + c.Question)
+	relevantPrecedents, err := prec.SearchRelevantPrecedent(c.Type, keywords)
+	if err != nil {
+		// Log but don't fail if precedent search fails
+		errorf("warning: precedent search failed: %v", err)
+	} else {
+		// Convert precedents to summaries for case context
+		for _, rec := range relevantPrecedents {
+			c.Precedents = append(c.Precedents, core.PrecedentSummary{
+				CaseID:    rec.CaseID,
+				Verdict:   rec.Verdict,
+				Summary:   rec.Summary,
+				Reasoning: rec.Reasoning,
+			})
+		}
+	}
+
 	agents := parseInt(flags["agents"], 3)
 	panel := deliberation.BuildPanel(agents, splitCSV(flags["perspectives"]), splitCSV(flags["models"]))
 	engine := deliberation.New(panel)
@@ -116,7 +135,7 @@ func cmdDeliberate(args []string) int {
 		return 1
 	}
 
-	prec := precedent.New(d.PrecedentIndexPath())
+	prec = precedent.New(d.PrecedentIndexPath())
 	if err := prec.Add(precedent.FromVerdict(verdict)); err != nil {
 		errorf("save precedent: %v", err)
 		return 1
@@ -241,8 +260,7 @@ func cmdHandoff(args []string) int {
 	return 0
 }
 
-// cmdFileCase is a SEN-002-compatible stub interface.
-// Relay integration is owned by a separate bead and agent.
+// cmdFileCase handles filing a new case from command-line flags.
 func cmdFileCase(args []string) int {
 	flags := parseFlags(args)
 	stateDir := resolveStateDir(flags["state-dir"])
@@ -251,40 +269,58 @@ func cmdFileCase(args []string) int {
 		errorf("init store: %v", err)
 		return 1
 	}
-	c, err := loadCase(flags["case"], flags["quick"], flags["filed-by"])
-	if err != nil {
-		errorf("load case: %v", err)
+
+	// Build case from flags
+	now := time.Now().UTC()
+	c := core.Case{
+		ID:                core.NewCaseID(now),
+		Type:              strings.TrimSpace(flags["type"]),
+		Summary:           strings.TrimSpace(flags["summary"]),
+		Question:          strings.TrimSpace(flags["question"]),
+		RequestedDecision: strings.TrimSpace(flags["requested-decision"]),
+		FiledAt:           now.Format(time.RFC3339),
+		FiledBy:           strings.TrimSpace(flags["filed-by"]),
+		Evidence:          collectEvidence(args),
+	}
+
+	// Validate required fields
+	if c.Type == "" {
+		errorf("--type is required")
 		return 1
 	}
-	c.Normalize(time.Now().UTC())
+	if c.Summary == "" {
+		errorf("--summary is required")
+		return 1
+	}
+	if c.Question == "" {
+		errorf("--question is required")
+		return 1
+	}
+
+	// Validate case type
+	validTypes := []string{"rule_evolution", "gate_criteria", "dispute", "priority", "architecture", "general"}
+	if !contains(validTypes, c.Type) {
+		errorf("invalid case type: %s (must be one of: %s)", c.Type, strings.Join(validTypes, ", "))
+		return 1
+	}
+
+	// Normalize fills in defaults
+	c.Normalize(now)
+
+	// Final validation
 	if err := c.Validate(); err != nil {
 		errorf("case validation: %v", err)
 		return 1
 	}
+
+	// Save the case
 	if err := d.SaveCase(c); err != nil {
 		errorf("save case: %v", err)
 		return 1
 	}
 
-	envelope := map[string]any{
-		"type":                   "senate.case.filed",
-		"filed_at":               time.Now().UTC().Format(time.RFC3339),
-		"relay_integration_stub": true,
-		"case_id":                c.ID,
-		"case":                   c,
-	}
-	if err := appendJSONL(d.RelayOutboxPath(), envelope); err != nil {
-		errorf("queue relay outbox: %v", err)
-		return 1
-	}
-
-	if flagBool(args, "--json") {
-		outputJSON(envelope)
-		return 0
-	}
-	fmt.Printf("queued case filing stub: %s\n", c.ID)
-	fmt.Printf("outbox: %s\n", d.RelayOutboxPath())
-	fmt.Println("relay integration is intentionally stubbed (SEN-002 handled by another agent)")
+	// Print case ID on success
+	fmt.Println(c.ID)
 	return 0
 }
 
@@ -430,7 +466,7 @@ func usage() {
 
 COMMANDS:
   senate deliberate --case <file> [flags]      Run deliberation and synthesize a binding verdict
-  senate file-case --case <file> [flags]       Queue a case filing stub for Relay (SEN-002 boundary)
+  senate file-case [flags]                      File a new case to Senate
   senate precedent search --query <text>        Search stored verdict precedents
   senate handoff --case-id <id>                 Trigger implementation bead creation from stored verdict
   senate version                                Print version
@@ -438,6 +474,14 @@ COMMANDS:
 FLAGS:
   --state-dir <path>          Override Senate state root (default: ./state)
   --json                      Emit JSON output
+
+FILE-CASE FLAGS:
+  --type <type>               Case type (required): rule_evolution, gate_criteria, dispute, priority, architecture, general
+  --summary <text>            One-line case description (required)
+  --question <text>           The specific decision to be made (required)
+  --evidence <path>           Evidence path or bead:id (can be used multiple times)
+  --requested-decision <text> What the filer is asking for (optional)
+  --filed-by <name>           Who is filing the case (optional)
 
 DELIBERATE FLAGS:
   --quick <question>          Build ad-hoc case from a single question
@@ -457,4 +501,72 @@ func outputJSON(v any) {
 
 func errorf(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "senate: "+format+"\n", args...)
+}
+
+// collectEvidence extracts multiple --evidence flags from args.
+func collectEvidence(args []string) []string {
+	var evidence []string
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == "--evidence" && i+1 < len(args) {
+			ev := strings.TrimSpace(args[i+1])
+			if ev != "" {
+				evidence = append(evidence, ev)
+			}
+		}
+	}
+	return evidence
+}
+
+// contains checks if a string is in a slice.
+func contains(slice []string, s string) bool {
+	for _, item := range slice {
+		if item == s {
+			return true
+		}
+	}
+	return false
+}
+
+// extractKeywords extracts keywords from text for precedent searching
+func extractKeywords(text string) []string {
+	text = strings.ToLower(text)
+	replacer := strings.NewReplacer(
+		",", " ",
+		".", " ",
+		":", " ",
+		";", " ",
+		"(", " ",
+		")", " ",
+		"[", " ",
+		"]", " ",
+		"/", " ",
+		"\\", " ",
+		"\n", " ",
+		"\t", " ",
+	)
+	text = replacer.Replace(text)
+	parts := strings.Fields(text)
+	if len(parts) == 0 {
+		return nil
+	}
+	stop := map[string]struct{}{
+		"the": {}, "and": {}, "for": {}, "with": {}, "that": {}, "this": {}, "from": {},
+		"into": {}, "were": {}, "been": {}, "will": {}, "case": {}, "verdict": {},
+	}
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if len(p) < 3 {
+			continue
+		}
+		if _, ok := stop[p]; ok {
+			continue
+		}
+		if _, ok := seen[p]; ok {
+			continue
+		}
+		seen[p] = struct{}{}
+		out = append(out, p)
+	}
+	return out
 }

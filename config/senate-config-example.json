@@ -1,0 +1,159 @@
+{
+  "version": "1.0",
+  "default_model": "claude:opus",
+  "default_panel_size": 3,
+  "session_timeout_seconds": 300,
+  "senators": [
+    {
+      "name": "pragmatist",
+      "model": "claude:opus",
+      "identity": {
+        "full_name": "Senator Marcus Aurelius",
+        "archetype": "The Pragmatic Builder",
+        "decision_style": "Bias toward action with calculated risk",
+        "values": [
+          "shipping velocity",
+          "practical outcomes",
+          "reversible decisions",
+          "developer productivity"
+        ],
+        "anti_values": [
+          "analysis paralysis",
+          "perfection over progress",
+          "theoretical purity without practical merit"
+        ]
+      },
+      "system_prompt_template": "templates/pragmatist.md",
+      "memory": {
+        "path": "memory/senators/pragmatist/",
+        "precedent_access": true,
+        "case_history_limit": 20,
+        "update_long_term_memory": true
+      },
+      "response_config": {
+        "max_tokens": 1500,
+        "temperature": 0.7,
+        "require_structured_output": true
+      }
+    },
+    {
+      "name": "purist",
+      "model": "claude:opus",
+      "identity": {
+        "full_name": "Senator Athena Sophia",
+        "archetype": "The Architectural Purist",
+        "decision_style": "Correctness and consistency above all",
+        "values": [
+          "system integrity",
+          "long-term maintainability",
+          "proven patterns",
+          "technical excellence"
+        ],
+        "anti_values": [
+          "technical debt",
+          "shortcuts that compound",
+          "inconsistent interfaces",
+          "cowboy coding"
+        ]
+      },
+      "system_prompt_template": "templates/purist.md",
+      "memory": {
+        "path": "memory/senators/purist/",
+        "precedent_access": true,
+        "case_history_limit": 20,
+        "update_long_term_memory": true
+      },
+      "response_config": {
+        "max_tokens": 1500,
+        "temperature": 0.6,
+        "require_structured_output": true
+      }
+    },
+    {
+      "name": "skeptic",
+      "model": "claude:opus",
+      "identity": {
+        "full_name": "Senator Diogenes Truth",
+        "archetype": "The Critical Skeptic",
+        "decision_style": "Challenge assumptions, find hidden risks",
+        "values": [
+          "evidence-based decisions",
+          "failure mode analysis",
+          "honest assessment",
+          "uncovering blind spots"
+        ],
+        "anti_values": [
+          "wishful thinking",
+          "unvalidated claims",
+          "groupthink",
+          "confirmation bias"
+        ]
+      },
+      "system_prompt_template": "templates/skeptic.md",
+      "memory": {
+        "path": "memory/senators/skeptic/",
+        "precedent_access": true,
+        "case_history_limit": 20,
+        "update_long_term_memory": true
+      },
+      "response_config": {
+        "max_tokens": 1500,
+        "temperature": 0.8,
+        "require_structured_output": true
+      }
+    }
+  ],
+  "alternate_senators": [
+    {
+      "name": "steward",
+      "model": "claude:sonnet",
+      "identity": {
+        "full_name": "Senator Diana Ops",
+        "archetype": "The Operations Steward",
+        "decision_style": "Stability and reliability first"
+      },
+      "system_prompt_template": "templates/steward.md"
+    },
+    {
+      "name": "advocate",
+      "model": "claude:sonnet",
+      "identity": {
+        "full_name": "Senator User Champion",
+        "archetype": "The User Advocate",
+        "decision_style": "User impact and experience focused"
+      },
+      "system_prompt_template": "templates/advocate.md"
+    }
+  ],
+  "judge_config": {
+    "model": "claude:opus",
+    "system_prompt_template": "templates/judge.md",
+    "synthesis_approach": "balanced",
+    "require_unanimous": false,
+    "dissent_threshold": 0.33
+  },
+  "communication": {
+    "response_markers": {
+      "initial_start": "=== INITIAL POSITION START ===",
+      "initial_end": "=== INITIAL POSITION END ===",
+      "challenge_start": "=== CHALLENGE RESPONSE START ===",
+      "challenge_end": "=== CHALLENGE RESPONSE END ===",
+      "final_start": "=== FINAL POSITION START ===",
+      "final_end": "=== FINAL POSITION END ==="
+    },
+    "capture_method": "tmux_capture_pane",
+    "response_detection": "marker_based",
+    "polling_interval_ms": 1000,
+    "max_wait_seconds": 300
+  },
+  "spawning": {
+    "tmux_socket": "/tmp/tmux-senate.sock",
+    "session_prefix": "senator",
+    "working_directory": "/home/chrote/athena/tools/senate",
+    "claude_flags": [
+      "-p",
+      "--dangerously-skip-permissions",
+      "--append-system-prompt"
+    ]
+  }
+}
