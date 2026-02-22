@@ -124,8 +124,8 @@ func (s *SenatorSession) SendPrompt(prompt string) (string, error) {
 		prompt, "Enter",
 	)
 
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("send prompt: %w", err)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("send prompt: %w (output: %s)", err, string(output))
 	}
 
 	// Wait for response with timeout
@@ -208,7 +208,10 @@ func (s *SenatorSession) clearBuffer() error {
 	cmd := exec.Command("tmux", "-S", TmuxSocket,
 		"clear-history", "-t", s.TmuxSessionID,
 	)
-	return cmd.Run()
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("clear buffer: %w (output: %s)", err, string(output))
+	}
+	return nil
 }
 
 // buildSystemPrompt generates the system prompt file from template
@@ -269,8 +272,14 @@ func (s *SenatorSession) Close() error {
 		"kill-session", "-t", s.TmuxSessionID,
 	)
 
-	// Ignore error if session doesn't exist
-	cmd.Run()
+	// Capture output but ignore error if session doesn't exist
+	if output, err := cmd.CombinedOutput(); err != nil {
+		// Only log if it's not a "session not found" error
+		if !strings.Contains(string(output), "can't find session") {
+			fmt.Fprintf(os.Stderr, "warning: failed to kill tmux session %s: %v (output: %s)\n",
+				s.TmuxSessionID, err, string(output))
+		}
+	}
 
 	// Cleanup temp files
 	s.cleanup()

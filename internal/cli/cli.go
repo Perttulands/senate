@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/Perttulands/senate/internal/core"
@@ -193,6 +195,7 @@ func cmdDeliberate(args []string) int {
 	if err != nil {
 		// Log but don't fail if precedent search fails
 		errorf("warning: precedent search failed: %v", err)
+		// Continue without precedents rather than failing deliberation
 	} else {
 		// Convert precedents to summaries for case context
 		for _, rec := range relevantPrecedents {
@@ -220,7 +223,10 @@ func cmdDeliberate(args []string) int {
 	}
 
 	if !flagBool(args, "--no-handoff") {
-		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		// Create context that respects interrupt signals
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 		defer cancel()
 		workspace := flags["workspace"]
 		res, hErr := handoff.CreateBeadForVerdict(ctx, nil, workspace, verdict)
@@ -334,7 +340,10 @@ func cmdHandoff(args []string) int {
 		return 0
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	// Create context that respects interrupt signals
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
 	res, err := handoff.CreateBeadForVerdict(ctx, nil, flags["workspace"], v)
 	if err != nil {
