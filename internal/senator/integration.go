@@ -201,7 +201,14 @@ func (o *DeliberationOrchestrator) parsePosition(response, senatorName, round st
 	}
 
 	// Get senator config for metadata
-	senatorConfig, _ := o.Config.GetSenatorByName(senatorName)
+	senatorConfig, err := o.Config.GetSenatorByName(senatorName)
+	if err != nil {
+		// Use default model if senator not found
+		senatorConfig = &SenatorConfig{
+			Name:  senatorName,
+			Model: "claude:opus",
+		}
+	}
 
 	return core.Position{
 		AgentID:     fmt.Sprintf("senator-%s", senatorName),

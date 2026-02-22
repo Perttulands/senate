@@ -149,7 +149,7 @@
   "spawning": {
     "tmux_socket": "/tmp/tmux-senate.sock",
     "session_prefix": "senator",
-    "working_directory": "/home/chrote/athena/tools/senate",
+    "working_directory": ".",
     "claude_flags": [
       "-p",
       "--dangerously-skip-permissions",

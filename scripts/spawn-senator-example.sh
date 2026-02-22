@@ -4,6 +4,9 @@
 
 set -euo pipefail
 
+# Trap errors for better debugging
+trap 'echo "Error at line $LINENO: $BASH_COMMAND" >&2' ERR
+
 # Configuration
 SENATE_ROOT="/home/chrote/athena/tools/senate"
 TMUX_SOCKET="/tmp/tmux-senate.sock"
@@ -44,6 +47,7 @@ fi)
 
 $(if [ -f "${MEMORY_DIR}/precedents.jsonl" ]; then
     echo "### Recent Precedents"
+    # REASON: jq errors are expected if file is empty/malformed, fallback message is appropriate
     tail -10 "${MEMORY_DIR}/precedents.jsonl" | jq -r '.summary' 2>/dev/null || echo "No recent precedents"
 fi)
 

@@ -58,6 +58,9 @@ func Run(args []string) int {
 func cmdHealth(args []string) int {
 	verbose := flagBool(args, "--verbose")
 	hasError := false
+	// Note: This function intentionally continues checking all prerequisites
+	// even after finding errors, to give users a complete picture of what
+	// needs to be fixed. This is not "swallowing" errors.
 
 	// Check Claude CLI
 	fmt.Print("Claude CLI: ")
