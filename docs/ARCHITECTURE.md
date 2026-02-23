@@ -40,7 +40,7 @@ tmux -S /tmp/tmux-senate.sock new-session -d -s "senator-{name}-{case_id}" \
 ## Senator Configuration Schema
 
 ### Config File Location
-`/home/chrote/athena/tools/senate/config/senate-config.json`
+`$SENATE_ROOT/config/senate-config.json` (where `SENATE_ROOT` defaults to `$HOME/tools/senate`)
 
 ### Schema
 

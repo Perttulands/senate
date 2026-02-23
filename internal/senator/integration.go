@@ -46,7 +46,7 @@ func (o *DeliberationOrchestrator) SpawnPanel(senatorNames []string) error {
 			return fmt.Errorf("get senator %s config: %w", name, err)
 		}
 
-		session, err := SpawnSenator(senatorConfig, o.CaseID)
+		session, err := SpawnSenator(senatorConfig, o.CaseID, o.Config.Spawning.WorkingDirectory)
 		if err != nil {
 			// Clean up any already spawned sessions
 			o.cleanupSessions()

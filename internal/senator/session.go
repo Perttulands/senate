@@ -48,10 +48,11 @@ type SenatorSession struct {
 	State         SessionState
 	StartTime     time.Time
 	TempDir       string // For system prompt files
+	WorkingDir    string // Senate project root
 }
 
 // SpawnSenator creates a new senator tmux session with Claude
-func SpawnSenator(config *SenatorConfig, caseID string) (*SenatorSession, error) {
+func SpawnSenator(config *SenatorConfig, caseID string, workingDir ...string) (*SenatorSession, error) {
 	// Generate unique session name
 	sessionID := fmt.Sprintf("senator-%s-%s", config.Name, caseID)
 
@@ -59,6 +60,12 @@ func SpawnSenator(config *SenatorConfig, caseID string) (*SenatorSession, error)
 	tempDir, err := os.MkdirTemp("", fmt.Sprintf("senate-%s-*", sessionID))
 	if err != nil {
 		return nil, fmt.Errorf("create temp dir: %w", err)
+	}
+
+	// Resolve working directory: explicit param > SENATE_ROOT env > $HOME/tools/senate
+	senateRoot := getSenateRoot()
+	if len(workingDir) > 0 && workingDir[0] != "" {
+		senateRoot = workingDir[0]
 	}
 
 	session := &SenatorSession{
@@ -69,6 +76,7 @@ func SpawnSenator(config *SenatorConfig, caseID string) (*SenatorSession, error)
 		State:         StateInitializing,
 		StartTime:     time.Now(),
 		TempDir:       tempDir,
+		WorkingDir:    senateRoot,
 	}
 
 	// Build system prompt from template
@@ -88,7 +96,7 @@ func SpawnSenator(config *SenatorConfig, caseID string) (*SenatorSession, error)
 	// Create tmux session
 	cmd := exec.Command("tmux", "-S", TmuxSocket,
 		"new-session", "-d", "-s", sessionID,
-		"-c", "/home/chrote/athena/tools/senate",
+		"-c", session.WorkingDir,
 		claudeCmd,
 	)
 
@@ -218,7 +226,7 @@ func (s *SenatorSession) clearBuffer() error {
 func (s *SenatorSession) buildSystemPrompt(outputPath string) error {
 	// For MVP, we'll use the template path directly
 	// In production, this would load memory, precedents, etc.
-	templatePath := filepath.Join("/home/chrote/athena/tools/senate", s.Config.SystemPromptTemplate)
+	templatePath := filepath.Join(s.WorkingDir, s.Config.SystemPromptTemplate)
 
 	// Check if template exists
 	if _, err := os.Stat(templatePath); os.IsNotExist(err) {

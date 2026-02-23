@@ -125,7 +125,7 @@ The system expects `claude` command to be available in PATH.
 which claude
 
 # Run a test deliberation
-cd /home/chrote/athena/tools/senate
+cd $SENATE_ROOT  # defaults to $HOME/tools/senate
 go run ./cmd/senate deliberate --case ./test-cases/example.json
 ```
 

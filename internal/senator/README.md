@@ -127,7 +127,7 @@ See `config/senate-config-example.json` for the full schema. Key elements:
 Run the example test to verify everything works:
 
 ```bash
-cd /home/chrote/athena/tools/senate
+cd $SENATE_ROOT  # defaults to $HOME/tools/senate
 go test -v -run Example ./internal/senator
 ```
 

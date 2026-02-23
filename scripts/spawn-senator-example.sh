@@ -8,7 +8,7 @@ set -euo pipefail
 trap 'echo "Error at line $LINENO: $BASH_COMMAND" >&2' ERR
 
 # Configuration
-SENATE_ROOT="/home/chrote/athena/tools/senate"
+SENATE_ROOT="${SENATE_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 TMUX_SOCKET="/tmp/tmux-senate.sock"
 SENATOR_NAME="${1:-pragmatist}"
 CASE_ID="${2:-SNT-001}"

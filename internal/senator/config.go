@@ -7,6 +7,19 @@ import (
 	"path/filepath"
 )
 
+// getSenateRoot returns the senate project root directory.
+// It checks SENATE_ROOT env var first, then falls back to $HOME/tools/senate.
+func getSenateRoot() string {
+	if root := os.Getenv("SENATE_ROOT"); root != "" {
+		return root
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "."
+	}
+	return filepath.Join(home, "tools", "senate")
+}
+
 // Config represents the complete Senate configuration
 type Config struct {
 	Version           string          `json:"version"`
@@ -94,7 +107,7 @@ type SpawnConfig struct {
 func LoadConfig(configPath string) (*Config, error) {
 	// Default to example config if not specified
 	if configPath == "" {
-		configPath = "/home/chrote/athena/tools/senate/config/senate-config-example.json"
+		configPath = filepath.Join(getSenateRoot(), "config", "senate-config-example.json")
 	}
 
 	// Make path absolute
@@ -182,7 +195,7 @@ func (c *Config) applyDefaults() {
 		c.Spawning.SessionPrefix = "senator"
 	}
 	if c.Spawning.WorkingDirectory == "" {
-		c.Spawning.WorkingDirectory = "/home/chrote/athena/tools/senate"
+		c.Spawning.WorkingDirectory = getSenateRoot()
 	}
 }
 

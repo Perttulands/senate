@@ -113,7 +113,11 @@ func defaultWorkspaceDir() string {
 	if ws := strings.TrimSpace(os.Getenv("ATHENA_WORKSPACE")); ws != "" {
 		return ws
 	}
-	return filepath.FromSlash("/home/chrote/athena/workspace")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.FromSlash("workspace")
+	}
+	return filepath.Join(home, "workspace")
 }
 
 // CreateBeadFromVerdict creates a Beads issue from a verdict.
