@@ -161,8 +161,8 @@ func synthesizeVerdictSimulated(c core.Case, positions []core.Position, judgeMod
 		Implementation: implementation,
 		Dissent:        "",
 		Binding:        false, // Test verdicts are never binding
-		JudgeModel:     judgeModel,
-		RenderedAt:     now.Format(time.RFC3339),
+		Judge:     judgeModel,
+		VerdictAt: now.Format(time.RFC3339),
 	}
 }
 

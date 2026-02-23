@@ -758,6 +758,27 @@ func analyzePrecedents(precedents []core.PrecedentSummary) string {
 
 	return ""
 }
+// majorityDecision returns the decision with the highest count.
+// Ties (no single winner with count > 1) fall back to DecisionDefer.
+func majorityDecision(counts map[core.Decision]int) core.Decision {
+	var best core.Decision
+	bestCount := 0
+	tied := false
+	for d, n := range counts {
+		if n > bestCount {
+			best = d
+			bestCount = n
+			tied = false
+		} else if n == bestCount && n > 0 {
+			tied = true
+		}
+	}
+	if bestCount == 0 || tied {
+		return core.DecisionDefer
+	}
+	return best
+}
+
 // countDecisions counts how many positions have each decision type
 func countDecisions(positions []core.Position) map[core.Decision]int {
 	counts := map[core.Decision]int{

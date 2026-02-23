@@ -2,30 +2,42 @@ package senator
 
 import (
 	"fmt"
-	"log"
+	"os/exec"
 	"strings"
+	"testing"
 )
 
-// ExampleSpawnSenator demonstrates spawning a senator and getting a response
-// Run this with: go test -run Example
-func ExampleSpawnSenator() {
+// TestSpawnSenatorIntegration demonstrates spawning a senator and getting a response.
+// Skips automatically when tmux is not available (CI, containers, etc.).
+func TestSpawnSenatorIntegration(t *testing.T) {
+	// Skip when tmux is unavailable
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not available, skipping integration test")
+	}
+	cmd := exec.Command("tmux", "-S", TmuxSocket, "list-sessions")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		outStr := string(out)
+		if strings.Contains(outStr, "no server running") || strings.Contains(outStr, "No such file") {
+			t.Skip("tmux server not running, skipping integration test")
+		}
+	}
+
 	// Load configuration
 	config, err := LoadConfig("")
 	if err != nil {
-		log.Fatalf("load config: %v", err)
+		t.Fatalf("load config: %v", err)
 	}
 
 	// Get the pragmatist senator config
 	senatorConfig, err := config.GetSenatorByName("pragmatist")
 	if err != nil {
-		log.Fatalf("get senator config: %v", err)
+		t.Fatalf("get senator config: %v", err)
 	}
 
 	// Spawn the senator
-	fmt.Println("Spawning senator...")
 	session, err := SpawnSenator(senatorConfig, "TEST-001")
 	if err != nil {
-		log.Fatalf("spawn senator: %v", err)
+		t.Fatalf("spawn senator: %v", err)
 	}
 	defer session.Close()
 
@@ -49,45 +61,23 @@ Please provide your initial position on this case.
 === CASE PRESENTATION END ===`
 
 	// Send the prompt
-	fmt.Println("Sending case presentation...")
 	response, err := session.SendPrompt(casePrompt)
 	if err != nil {
-		log.Fatalf("send prompt: %v", err)
+		t.Fatalf("send prompt: %v", err)
 	}
 
-	// Display the response
-	fmt.Println("\nSenator response received!")
-	fmt.Println(strings.Repeat("-", 60))
-	fmt.Println(response)
-	fmt.Println(strings.Repeat("-", 60))
+	if response == "" {
+		t.Fatal("expected non-empty response")
+	}
 
 	// Parse the stance from response
 	if strings.Contains(response, "Stance:") {
 		lines := strings.Split(response, "\n")
 		for _, line := range lines {
 			if strings.HasPrefix(strings.TrimSpace(line), "Stance:") {
-				fmt.Printf("\nDetected stance: %s\n", strings.TrimSpace(line))
+				fmt.Printf("Detected stance: %s\n", strings.TrimSpace(line))
 				break
 			}
 		}
 	}
-
-	fmt.Println("\nSession closed successfully!")
-
-	// Output:
-	// Spawning senator...
-	// Sending case presentation...
-	//
-	// Senator response received!
-	// ------------------------------------------------------------
-	// === INITIAL POSITION START ===
-	// Stance: approve
-	// Reasoning: ...
-	// Concerns: ...
-	// === INITIAL POSITION END ===
-	// ------------------------------------------------------------
-	//
-	// Detected stance: Stance: approve
-	//
-	// Session closed successfully!
 }
