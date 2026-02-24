@@ -45,8 +45,8 @@ func TestCreateBeadForVerdictCreated(t *testing.T) {
 	if res.BeadID != "athena-xyz" {
 		t.Fatalf("expected bead id athena-xyz, got %q", res.BeadID)
 	}
-	if r.name != "bd" {
-		t.Fatalf("expected bd command, got %q", r.name)
+	if r.name != "br" {
+		t.Fatalf("expected br command, got %q", r.name)
 	}
 }
 

@@ -14,7 +14,7 @@ import (
 
 var beadIDPattern = regexp.MustCompile(`([A-Za-z0-9]+-[A-Za-z0-9][A-Za-z0-9-]*)`)
 
-// Runner executes external commands (bd create).
+// Runner executes external commands (br create).
 type Runner interface {
 	Run(ctx context.Context, name string, args []string, dir string) (string, error)
 }
@@ -53,10 +53,10 @@ func CreateBeadForVerdict(ctx context.Context, runner Runner, workspaceDir strin
 	title := fmt.Sprintf("[%s] Senate %s: %s", target, verdict.CaseID, trimTo(verdict.Summary, 80))
 	description := strings.TrimSpace(fmt.Sprintf("Binding Senate verdict for case %s\n\nVerdict: %s\nReasoning: %s\nImplementation: %s\n", verdict.CaseID, verdict.Verdict, verdict.Reasoning, verdict.Implementation))
 
-	args := []string{"create", "--title", title, "--priority", "2", "--description", description, "--silent"}
-	out, err := runner.Run(ctx, "bd", args, workspaceDir)
+	args := []string{"create", title, "--priority", "2", "--description", description, "--silent"}
+	out, err := runner.Run(ctx, "br", args, workspaceDir)
 	if err != nil {
-		return Result{}, fmt.Errorf("bd create failed: %w (%s)", err, strings.TrimSpace(out))
+		return Result{}, fmt.Errorf("br create failed: %w (%s)", err, strings.TrimSpace(out))
 	}
 
 	beadID := parseBeadID(out)
@@ -123,9 +123,9 @@ func defaultWorkspaceDir() string {
 // CreateBeadFromVerdict creates a Beads issue from a verdict.
 // This is an alias for CreateBeadForVerdict to match the requested function name.
 func CreateBeadFromVerdict(ctx context.Context, verdict core.Verdict) (string, error) {
-	// Check if bd CLI exists
-	if _, err := exec.LookPath("bd"); err != nil {
-		return "", fmt.Errorf("bd CLI not found: %w", err)
+	// Check if br CLI exists
+	if _, err := exec.LookPath("br"); err != nil {
+		return "", fmt.Errorf("br CLI not found: %w", err)
 	}
 
 	// Use the existing implementation

@@ -55,10 +55,10 @@ func main() {
 	// - Priority: 2 (medium)
 }
 
-/* Expected bd command that will be executed:
+/* Expected br command that will be executed:
 
-bd create \
-  --title "[truthsayer] Senate senate-001: Adjust monitoring alert thresholds for reduced noise" \
+br create \
+  "[truthsayer] Senate senate-001: Adjust monitoring alert thresholds for reduced noise" \
   --priority "2" \
   --description "Binding Senate verdict for case senate-001
 

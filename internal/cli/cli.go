@@ -135,9 +135,9 @@ func cmdHealth(args []string) int {
 		}
 	}
 
-	// Check bd (beads CLI)
-	fmt.Print("Beads CLI (bd): ")
-	if path, err := exec.LookPath("bd"); err != nil {
+	// Check br (beads CLI)
+	fmt.Print("Beads CLI (br): ")
+	if path, err := exec.LookPath("br"); err != nil {
 		fmt.Println("⚠️  NOT FOUND (optional for handoff)")
 		if verbose {
 			fmt.Printf("  Error: %v\n", err)
@@ -606,7 +606,7 @@ DELIBERATE FLAGS:
   --agents <n>                Number of panel agents (default 3)
   --perspectives a,b,c        Override perspective labels
   --models m1,m2              Override model labels
-  --workspace <path>          Workspace path for bd handoff creation
+  --workspace <path>          Workspace path for br handoff creation
   --no-handoff                Disable SEN-006 automatic bead creation
 `)
 }
