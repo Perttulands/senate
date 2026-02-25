@@ -15,13 +15,12 @@ import (
 	"time"
 
 	"github.com/Perttulands/senate/internal/core"
-	"github.com/Perttulands/senate/internal/deliberation"
 	"github.com/Perttulands/senate/internal/handoff"
 	"github.com/Perttulands/senate/internal/precedent"
 	"github.com/Perttulands/senate/internal/store"
 )
 
-const Version = "0.1.0"
+const Version = "0.2.0"
 
 // Run executes the Senate CLI.
 func Run(args []string) int {
@@ -42,14 +41,16 @@ func Run(args []string) int {
 		return 0
 	case "health":
 		return cmdHealth(cmdArgs)
-	case "deliberate":
-		return cmdDeliberate(cmdArgs)
+	case "ask":
+		return cmdAsk(cmdArgs)
+	case "start":
+		return cmdStart(cmdArgs)
+	case "file-case":
+		return cmdFileCase(cmdArgs)
 	case "precedent":
 		return cmdPrecedent(cmdArgs)
 	case "handoff":
 		return cmdHandoff(cmdArgs)
-	case "file-case":
-		return cmdFileCase(cmdArgs)
 	default:
 		errorf("unknown command: %s", cmd)
 		usage()
@@ -57,112 +58,276 @@ func Run(args []string) int {
 	}
 }
 
+// --- Commands ---
+
 func cmdHealth(args []string) int {
 	verbose := flagBool(args, "--verbose")
 	hasError := false
-	// Note: This function intentionally continues checking all prerequisites
-	// even after finding errors, to give users a complete picture of what
-	// needs to be fixed. This is not "swallowing" errors.
 
-	// Check Claude CLI
 	fmt.Print("Claude CLI: ")
 	if path, err := exec.LookPath("claude"); err != nil {
-		fmt.Println("❌ NOT FOUND")
+		fmt.Println("NOT FOUND")
 		hasError = true
 		if verbose {
 			fmt.Printf("  Error: %v\n", err)
-			fmt.Println("  Install: https://docs.anthropic.com/claude/docs/claude-cli")
 		}
 	} else {
-		fmt.Println("✓")
+		fmt.Println("ok")
 		if verbose {
 			fmt.Printf("  Path: %s\n", path)
 		}
 	}
 
-	// Check tmux
-	fmt.Print("Tmux: ")
-	if path, err := exec.LookPath("tmux"); err != nil {
-		fmt.Println("❌ NOT FOUND")
-		hasError = true
-		if verbose {
-			fmt.Printf("  Error: %v\n", err)
-			fmt.Println("  Install: sudo apt-get install tmux")
-		}
-	} else {
-		fmt.Println("✓")
-		if verbose {
-			fmt.Printf("  Path: %s\n", path)
-		}
-	}
-
-	// Check tmux socket
-	const tmuxSocket = "/tmp/tmux-senate.sock"
-	fmt.Print("Tmux socket: ")
-	socketDir := filepath.Dir(tmuxSocket)
-	if info, err := os.Stat(socketDir); err != nil {
-		fmt.Printf("❌ DIR NOT ACCESSIBLE (%s)\n", socketDir)
-		hasError = true
-		if verbose {
-			fmt.Printf("  Error: %v\n", err)
-		}
-	} else if !info.IsDir() {
-		fmt.Printf("❌ NOT A DIRECTORY (%s)\n", socketDir)
-		hasError = true
-	} else {
-		// Test tmux socket
-		cmd := exec.Command("tmux", "-S", tmuxSocket, "list-sessions")
-		if output, err := cmd.CombinedOutput(); err != nil {
-			if strings.Contains(string(output), "no server running") || strings.Contains(string(output), "no sessions") {
-				fmt.Println("✓")
-				if verbose {
-					fmt.Printf("  Socket: %s (no active sessions)\n", tmuxSocket)
-				}
-			} else {
-				fmt.Println("❌ SOCKET TEST FAILED")
-				hasError = true
-				if verbose {
-					fmt.Printf("  Error: %v\n", err)
-					fmt.Printf("  Output: %s\n", output)
-				}
-			}
-		} else {
-			fmt.Println("✓")
-			if verbose {
-				fmt.Printf("  Socket: %s\n", tmuxSocket)
-				fmt.Printf("  Active sessions:\n%s", output)
-			}
-		}
-	}
-
-	// Check br (beads CLI)
-	fmt.Print("Beads CLI (br): ")
-	if path, err := exec.LookPath("br"); err != nil {
-		fmt.Println("⚠️  NOT FOUND (optional for handoff)")
-		if verbose {
-			fmt.Printf("  Error: %v\n", err)
-			fmt.Println("  Note: Required only for automatic verdict handoff")
-		}
-	} else {
-		fmt.Println("✓")
-		if verbose {
-			fmt.Printf("  Path: %s\n", path)
-		}
-	}
-
-	// Summary
 	fmt.Println()
 	if hasError {
-		fmt.Println("❌ Senate is NOT ready for real deliberation")
-		fmt.Println("Fix the issues above before running 'senate deliberate'")
+		fmt.Println("Senate is NOT ready — fix the issues above")
 		return 1
 	}
-
-	fmt.Println("✅ Senate is ready for real deliberation")
+	fmt.Println("Senate is ready")
 	return 0
 }
 
-func cmdDeliberate(args []string) int {
+// AskResult is the agent-friendly JSON output from senate ask.
+type AskResult struct {
+	CaseID         string        `json:"case_id"`
+	Verdict        string        `json:"verdict"`
+	Reasoning      string        `json:"reasoning"`
+	Implementation string        `json:"implementation,omitempty"`
+	Dissent        string        `json:"dissent,omitempty"`
+	Positions      []AskPosition `json:"positions"`
+}
+
+// AskPosition is a compact position summary.
+type AskPosition struct {
+	Senator     string `json:"senator"`
+	Stance      string `json:"stance"`
+	KeyArgument string `json:"key_argument"`
+}
+
+// cmdAsk runs a deliberation in pipe mode and returns JSON.
+func cmdAsk(args []string) int {
+	flags := parseFlags(args)
+	agents := parseInt(flags["agents"], 3)
+	caseType := strings.TrimSpace(flags["type"])
+	if caseType == "" {
+		caseType = "general"
+	}
+	filedBy := strings.TrimSpace(flags["filed-by"])
+	if filedBy == "" {
+		filedBy = "agent"
+	}
+	model := strings.TrimSpace(flags["model"])
+	if model == "" {
+		model = "sonnet"
+	}
+
+	// Extract question: positional arg or stdin pipe
+	question := extractPositionalArg(args)
+	if question == "" {
+		stat, _ := os.Stdin.Stat()
+		if (stat.Mode() & os.ModeCharDevice) == 0 {
+			data, err := os.ReadFile("/dev/stdin")
+			if err == nil {
+				question = strings.TrimSpace(string(data))
+			}
+		}
+	}
+	if question == "" {
+		errorf("usage: senate ask \"question\" [--agents <n>]")
+		return 1
+	}
+
+	// Build case
+	stateDir := resolveStateDir(flags["state-dir"])
+	d, err := store.New(stateDir)
+	if err != nil {
+		errorf("init store: %v", err)
+		return 1
+	}
+
+	now := time.Now().UTC()
+	c := core.Case{
+		Type:     caseType,
+		Summary:  question,
+		Question: question,
+		FiledBy:  filedBy,
+	}
+	c.Normalize(now)
+	if err := d.SaveCase(c); err != nil {
+		errorf("save case: %v", err)
+		return 1
+	}
+
+	// Build protocol — need temp dir first for verdict path
+	tempDir, err := os.MkdirTemp("", "senate-*")
+	if err != nil {
+		errorf("create temp dir: %v", err)
+		return 1
+	}
+	defer os.RemoveAll(tempDir)
+
+	verdictFile := VerdictPath(tempDir)
+	prompt := BuildSystemPrompt("ask", verdictFile, c.ID)
+	promptFile := filepath.Join(tempDir, "protocol.md")
+	if err := os.WriteFile(promptFile, []byte(prompt), 0644); err != nil {
+		errorf("write protocol: %v", err)
+		return 1
+	}
+
+	agentsJSON := BuildAgentsJSON(agents)
+
+	fmt.Fprintf(os.Stderr, "senate: deliberating with %d agents (%s)...\n", agents, senatorLabel(agents))
+	fmt.Fprintf(os.Stderr, "senate: case %s\n", c.ID)
+
+	// Run Claude in pipe mode
+	cmd := exec.Command("claude", "-p",
+		"--dangerously-skip-permissions",
+		"--model", model,
+		"--system-prompt-file", promptFile,
+		"--agents", agentsJSON,
+	)
+	cmd.Stdin = strings.NewReader(question)
+	cmd.Stderr = os.Stderr // Show claude's progress on stderr
+
+	if err := cmd.Run(); err != nil {
+		errorf("claude: %v", err)
+		return 1
+	}
+
+	// Read verdict from file
+	data, err := os.ReadFile(verdictFile)
+	if err != nil {
+		errorf("verdict not written — claude may not have completed the protocol: %v", err)
+		return 1
+	}
+
+	var result AskResult
+	if err := json.Unmarshal(data, &result); err != nil {
+		errorf("parse verdict: %v", err)
+		// Output raw content as fallback
+		fmt.Fprintln(os.Stderr, "senate: raw verdict output:")
+		fmt.Fprintln(os.Stderr, string(data))
+		return 1
+	}
+
+	// Store verdict
+	verdict := core.Verdict{
+		CaseID:    c.ID,
+		FiledAt:   c.FiledAt,
+		VerdictAt: time.Now().UTC().Format(time.RFC3339),
+		Type:      c.Type,
+		Summary:   c.Summary,
+		Verdict:   core.Decision(result.Verdict),
+		Reasoning: result.Reasoning,
+		Implementation: result.Implementation,
+		Dissent:   result.Dissent,
+		Binding:   result.Verdict != "deferred",
+		Judge:     "claude-" + model,
+	}
+	if err := d.SaveVerdict(verdict); err != nil {
+		fmt.Fprintf(os.Stderr, "senate: warning: save verdict failed: %v\n", err)
+	}
+
+	// Save precedent
+	prec := precedent.New(d.PrecedentIndexPath())
+	if pErr := prec.Add(precedent.FromVerdict(verdict)); pErr != nil {
+		fmt.Fprintf(os.Stderr, "senate: warning: precedent save failed: %v\n", pErr)
+	}
+
+	// JSON to stdout
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(result); err != nil {
+		errorf("json encode: %v", err)
+		return 1
+	}
+
+	return 0
+}
+
+// cmdStart runs an interactive deliberation.
+func cmdStart(args []string) int {
+	flags := parseFlags(args)
+	agents := parseInt(flags["agents"], 3)
+	model := strings.TrimSpace(flags["model"])
+	if model == "" {
+		model = "sonnet"
+	}
+
+	// Create temp dir first so we know the verdict path
+	tempDir, err := os.MkdirTemp("", "senate-*")
+	if err != nil {
+		errorf("create temp dir: %v", err)
+		return 1
+	}
+	defer os.RemoveAll(tempDir)
+
+	// We don't have a case ID yet — use a placeholder, Claude will fill it
+	now := time.Now().UTC()
+	caseID := core.NewCaseID(now)
+	verdictFile := VerdictPath(tempDir)
+	prompt := BuildSystemPrompt("start", verdictFile, caseID)
+
+	promptFile := filepath.Join(tempDir, "protocol.md")
+	if err := os.WriteFile(promptFile, []byte(prompt), 0644); err != nil {
+		errorf("write protocol: %v", err)
+		return 1
+	}
+
+	agentsJSON := BuildAgentsJSON(agents)
+
+	fmt.Printf("Senate convened — %d senators (%s)\n", agents, senatorLabel(agents))
+	fmt.Printf("Ask your question and the senate will deliberate.\n\n")
+
+	// Run Claude interactively (foreground)
+	cmd := exec.Command("claude",
+		"--dangerously-skip-permissions",
+		"--model", model,
+		"--system-prompt-file", promptFile,
+		"--agents", agentsJSON,
+	)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		errorf("claude: %v", err)
+		return 1
+	}
+
+	// Try to read and store the verdict
+	stateDir := resolveStateDir(flags["state-dir"])
+	if data, err := os.ReadFile(verdictFile); err == nil {
+		var result AskResult
+		if err := json.Unmarshal(data, &result); err == nil {
+			d, sErr := store.New(stateDir)
+			if sErr == nil {
+				verdict := core.Verdict{
+					CaseID:    result.CaseID,
+					FiledAt:   now.Format(time.RFC3339),
+					VerdictAt: time.Now().UTC().Format(time.RFC3339),
+					Type:      "general",
+					Summary:   "Interactive deliberation",
+					Verdict:   core.Decision(result.Verdict),
+					Reasoning: result.Reasoning,
+					Implementation: result.Implementation,
+					Dissent:   result.Dissent,
+					Binding:   result.Verdict != "deferred",
+					Judge:     "claude-" + model,
+				}
+				if err := d.SaveVerdict(verdict); err != nil {
+					fmt.Fprintf(os.Stderr, "senate: warning: save verdict: %v\n", err)
+				}
+				prec := precedent.New(d.PrecedentIndexPath())
+				_ = prec.Add(precedent.FromVerdict(verdict))
+			}
+		}
+	}
+
+	return 0
+}
+
+func cmdFileCase(args []string) int {
 	flags := parseFlags(args)
 	stateDir := resolveStateDir(flags["state-dir"])
 	d, err := store.New(stateDir)
@@ -171,13 +336,37 @@ func cmdDeliberate(args []string) int {
 		return 1
 	}
 
-	c, err := loadCase(flags["case"], flags["quick"], flags["filed-by"])
-	if err != nil {
-		errorf("load case: %v", err)
+	now := time.Now().UTC()
+	c := core.Case{
+		ID:                core.NewCaseID(now),
+		Type:              strings.TrimSpace(flags["type"]),
+		Summary:           strings.TrimSpace(flags["summary"]),
+		Question:          strings.TrimSpace(flags["question"]),
+		RequestedDecision: strings.TrimSpace(flags["requested-decision"]),
+		FiledAt:           now.Format(time.RFC3339),
+		FiledBy:           strings.TrimSpace(flags["filed-by"]),
+		Evidence:          collectEvidence(args),
+	}
+
+	if c.Type == "" {
+		errorf("--type is required")
+		return 1
+	}
+	if c.Summary == "" {
+		errorf("--summary is required")
+		return 1
+	}
+	if c.Question == "" {
+		errorf("--question is required")
 		return 1
 	}
 
-	now := time.Now().UTC()
+	validTypes := []string{"rule_evolution", "gate_criteria", "dispute", "priority", "architecture", "general"}
+	if !contains(validTypes, c.Type) {
+		errorf("invalid case type: %s (must be one of: %s)", c.Type, strings.Join(validTypes, ", "))
+		return 1
+	}
+
 	c.Normalize(now)
 	if err := c.Validate(); err != nil {
 		errorf("case validation: %v", err)
@@ -188,92 +377,13 @@ func cmdDeliberate(args []string) int {
 		return 1
 	}
 
-	// Query relevant precedents before deliberation
-	prec := precedent.New(d.PrecedentIndexPath())
-	keywords := extractKeywords(c.Summary + " " + c.Question)
-	relevantPrecedents, err := prec.SearchRelevantPrecedent(c.Type, keywords)
-	if err != nil {
-		// Log but don't fail if precedent search fails
-		errorf("warning: precedent search failed: %v", err)
-		// Continue without precedents rather than failing deliberation
-	} else {
-		// Convert precedents to summaries for case context
-		for _, rec := range relevantPrecedents {
-			c.Precedents = append(c.Precedents, core.PrecedentSummary{
-				CaseID:    rec.CaseID,
-				Verdict:   rec.Verdict,
-				Summary:   rec.Summary,
-				Reasoning: rec.Reasoning,
-			})
-		}
-	}
-
-	agents := parseInt(flags["agents"], 3)
-	panel := deliberation.BuildPanel(agents, splitCSV(flags["perspectives"]), splitCSV(flags["models"]))
-	engine := deliberation.New(panel)
-	transcript, verdict, err := engine.Deliberate(c, now)
-	if err != nil {
-		errorf("deliberation: %v", err)
-		return 1
-	}
-
-	if err := d.SaveTranscript(transcript); err != nil {
-		errorf("save transcript: %v", err)
-		return 1
-	}
-
-	if !flagBool(args, "--no-handoff") {
-		// Create context that respects interrupt signals
-		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		defer stop()
-		ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
-		defer cancel()
-		workspace := flags["workspace"]
-		res, hErr := handoff.CreateBeadForVerdict(ctx, nil, workspace, verdict)
-		if hErr != nil {
-			errorf("handoff: %v", hErr)
-			return 1
-		}
-		if res.Status == "created" {
-			verdict.Handoff = &core.Handoff{
-				System:    inferTargetSystem(verdict.Type),
-				BeadID:    res.BeadID,
-				Status:    res.Status,
-				CreatedAt: now.Format(time.RFC3339),
-			}
-		}
-	}
-
-	if err := d.SaveVerdict(verdict); err != nil {
-		errorf("save verdict: %v", err)
-		return 1
-	}
-
-	prec = precedent.New(d.PrecedentIndexPath())
-	if err := prec.Add(precedent.FromVerdict(verdict)); err != nil {
-		errorf("save precedent: %v", err)
-		return 1
-	}
-
-	if flagBool(args, "--json") {
-		outputJSON(verdict)
-		return 0
-	}
-
-	fmt.Printf("case_id: %s\n", verdict.CaseID)
-	fmt.Printf("verdict: %s\n", verdict.Verdict)
-	fmt.Printf("binding: %t\n", verdict.Binding)
-	fmt.Printf("verdict_file: %s\n", d.VerdictPath(verdict.CaseID))
-	fmt.Printf("transcript_file: %s\n", d.TranscriptPath(verdict.CaseID))
-	if verdict.Handoff != nil && verdict.Handoff.BeadID != "" {
-		fmt.Printf("handoff_bead: %s\n", verdict.Handoff.BeadID)
-	}
+	fmt.Println(c.ID)
 	return 0
 }
 
 func cmdPrecedent(args []string) int {
 	if len(args) == 0 {
-		errorf("usage: senate precedent search --query <text> [flags]")
+		errorf("usage: senate precedent search --query <text>")
 		return 1
 	}
 	sub := args[0]
@@ -320,7 +430,7 @@ func cmdHandoff(args []string) int {
 	flags := parseFlags(args)
 	caseID := strings.TrimSpace(flags["case-id"])
 	if caseID == "" {
-		errorf("usage: senate handoff --case-id <id> [--workspace <path>] [--state-dir <path>]")
+		errorf("usage: senate handoff --case-id <id>")
 		return 1
 	}
 
@@ -340,11 +450,11 @@ func cmdHandoff(args []string) int {
 		return 0
 	}
 
-	// Create context that respects interrupt signals
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
+
 	res, err := handoff.CreateBeadForVerdict(ctx, nil, flags["workspace"], v)
 	if err != nil {
 		errorf("handoff: %v", err)
@@ -361,10 +471,8 @@ func cmdHandoff(args []string) int {
 			errorf("save verdict: %v", err)
 			return 1
 		}
-		if err := precedent.New(d.PrecedentIndexPath()).Add(precedent.FromVerdict(v)); err != nil {
-			errorf("update precedent index: %v", err)
-			return 1
-		}
+		prec := precedent.New(d.PrecedentIndexPath())
+		_ = prec.Add(precedent.FromVerdict(v))
 	}
 	if flagBool(args, "--json") {
 		outputJSON(res)
@@ -374,70 +482,6 @@ func cmdHandoff(args []string) int {
 	if res.BeadID != "" {
 		fmt.Printf("handoff bead: %s\n", res.BeadID)
 	}
-	return 0
-}
-
-// cmdFileCase handles filing a new case from command-line flags.
-func cmdFileCase(args []string) int {
-	flags := parseFlags(args)
-	stateDir := resolveStateDir(flags["state-dir"])
-	d, err := store.New(stateDir)
-	if err != nil {
-		errorf("init store: %v", err)
-		return 1
-	}
-
-	// Build case from flags
-	now := time.Now().UTC()
-	c := core.Case{
-		ID:                core.NewCaseID(now),
-		Type:              strings.TrimSpace(flags["type"]),
-		Summary:           strings.TrimSpace(flags["summary"]),
-		Question:          strings.TrimSpace(flags["question"]),
-		RequestedDecision: strings.TrimSpace(flags["requested-decision"]),
-		FiledAt:           now.Format(time.RFC3339),
-		FiledBy:           strings.TrimSpace(flags["filed-by"]),
-		Evidence:          collectEvidence(args),
-	}
-
-	// Validate required fields
-	if c.Type == "" {
-		errorf("--type is required")
-		return 1
-	}
-	if c.Summary == "" {
-		errorf("--summary is required")
-		return 1
-	}
-	if c.Question == "" {
-		errorf("--question is required")
-		return 1
-	}
-
-	// Validate case type
-	validTypes := []string{"rule_evolution", "gate_criteria", "dispute", "priority", "architecture", "general"}
-	if !contains(validTypes, c.Type) {
-		errorf("invalid case type: %s (must be one of: %s)", c.Type, strings.Join(validTypes, ", "))
-		return 1
-	}
-
-	// Normalize fills in defaults
-	c.Normalize(now)
-
-	// Final validation
-	if err := c.Validate(); err != nil {
-		errorf("case validation: %v", err)
-		return 1
-	}
-
-	// Save the case
-	if err := d.SaveCase(c); err != nil {
-		errorf("save case: %v", err)
-		return 1
-	}
-
-	// Print case ID on success
-	fmt.Println(c.ID)
 	return 0
 }
 
@@ -467,22 +511,19 @@ func loadCase(caseFile, quickQuestion, filedBy string) (core.Case, error) {
 	return c, nil
 }
 
-func appendJSONL(path string, value any) error {
-	line, err := json.Marshal(value)
-	if err != nil {
-		return err
+// --- Helpers ---
+
+func extractPositionalArg(args []string) string {
+	for i := 0; i < len(args); i++ {
+		if strings.HasPrefix(args[i], "--") {
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "--") {
+				i++
+			}
+			continue
+		}
+		return strings.TrimSpace(args[i])
 	}
-	line = append(line, '\n')
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	_, err = f.Write(line)
-	return err
+	return ""
 }
 
 func parseFlags(args []string) map[string]string {
@@ -571,8 +612,6 @@ func inferTargetSystem(caseType string) string {
 		return "truthsayer"
 	case "gate_criteria":
 		return "centurion"
-	case "priority_triage", "dispute_resolution":
-		return "athena"
 	default:
 		return "athena"
 	}
@@ -582,32 +621,31 @@ func usage() {
 	fmt.Print(`senate - multi-agent deliberation system
 
 COMMANDS:
-  senate health [--verbose]                     Check if Senate is ready for real deliberation
-  senate deliberate --case <file> [flags]      Run deliberation and synthesize a binding verdict
-  senate file-case [flags]                      File a new case to Senate
-  senate precedent search --query <text>        Search stored verdict precedents
-  senate handoff --case-id <id>                 Trigger implementation bead creation from stored verdict
-  senate version                                Print version
+  senate ask "question" [flags]           Ask the senate (agent-friendly, JSON output)
+  senate start [--agents <n>]             Convene the senate interactively
+  senate health                           Check prerequisites
+  senate file-case [flags]                File a new case
+  senate precedent search --query <text>  Search verdict precedents
+  senate handoff --case-id <id>           Create implementation bead from verdict
+  senate version                          Print version
 
-FLAGS:
-  --state-dir <path>          Override Senate state root (default: ./state)
-  --json                      Emit JSON output
+ASK FLAGS:
+  --agents <n>           Number of senators (default 3, max 5)
+  --type <type>          Case type (default: general)
+  --filed-by <name>      Who is asking (default: "agent")
+  --model <model>        Moderator model (default: sonnet)
+  --state-dir <path>     Override state root
 
-FILE-CASE FLAGS:
-  --type <type>               Case type (required): rule_evolution, gate_criteria, dispute, priority, architecture, general
-  --summary <text>            One-line case description (required)
-  --question <text>           The specific decision to be made (required)
-  --evidence <path>           Evidence path or bead:id (can be used multiple times)
-  --requested-decision <text> What the filer is asking for (optional)
-  --filed-by <name>           Who is filing the case (optional)
+START FLAGS:
+  --agents <n>           Number of senators (default 3, max 5)
+  --model <model>        Model (default: sonnet)
+  --state-dir <path>     Override state root
 
-DELIBERATE FLAGS:
-  --quick <question>          Build ad-hoc case from a single question
-  --agents <n>                Number of panel agents (default 3)
-  --perspectives a,b,c        Override perspective labels
-  --models m1,m2              Override model labels
-  --workspace <path>          Workspace path for br handoff creation
-  --no-handoff                Disable SEN-006 automatic bead creation
+EXAMPLES:
+  senate ask "Should we use Redis or Postgres for caching?"
+  senate ask "Approve this architecture?" --agents 2 --type architecture
+  echo "long question..." | senate ask --agents 3
+  senate start --agents 2
 `)
 }
 
@@ -621,7 +659,6 @@ func errorf(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "senate: "+format+"\n", args...)
 }
 
-// collectEvidence extracts multiple --evidence flags from args.
 func collectEvidence(args []string) []string {
 	var evidence []string
 	for i := 0; i < len(args)-1; i++ {
@@ -635,7 +672,6 @@ func collectEvidence(args []string) []string {
 	return evidence
 }
 
-// contains checks if a string is in a slice.
 func contains(slice []string, s string) bool {
 	for _, item := range slice {
 		if item == s {
@@ -643,48 +679,4 @@ func contains(slice []string, s string) bool {
 		}
 	}
 	return false
-}
-
-// extractKeywords extracts keywords from text for precedent searching
-func extractKeywords(text string) []string {
-	text = strings.ToLower(text)
-	replacer := strings.NewReplacer(
-		",", " ",
-		".", " ",
-		":", " ",
-		";", " ",
-		"(", " ",
-		")", " ",
-		"[", " ",
-		"]", " ",
-		"/", " ",
-		"\\", " ",
-		"\n", " ",
-		"\t", " ",
-	)
-	text = replacer.Replace(text)
-	parts := strings.Fields(text)
-	if len(parts) == 0 {
-		return nil
-	}
-	stop := map[string]struct{}{
-		"the": {}, "and": {}, "for": {}, "with": {}, "that": {}, "this": {}, "from": {},
-		"into": {}, "were": {}, "been": {}, "will": {}, "case": {}, "verdict": {},
-	}
-	seen := map[string]struct{}{}
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		if len(p) < 3 {
-			continue
-		}
-		if _, ok := stop[p]; ok {
-			continue
-		}
-		if _, ok := seen[p]; ok {
-			continue
-		}
-		seen[p] = struct{}{}
-		out = append(out, p)
-	}
-	return out
 }
