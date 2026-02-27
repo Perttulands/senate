@@ -74,3 +74,128 @@ func TestParseBeadID(t *testing.T) {
 		t.Fatalf("unexpected bead id: %q", got)
 	}
 }
+
+func TestCreateBeadForVerdictSkipNonBinding(t *testing.T) {
+	res, err := CreateBeadForVerdict(context.Background(), &fakeRunner{}, "", core.Verdict{
+		Binding: false,
+		Verdict: core.DecisionApprove,
+	})
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if res.Status != "skipped" {
+		t.Fatalf("expected skipped, got %q", res.Status)
+	}
+}
+
+func TestCreateBeadForVerdictUnparsableID(t *testing.T) {
+	r := &fakeRunner{out: "!!!###$$$"}
+	v := core.Verdict{Binding: true, Verdict: core.DecisionApprove, Type: "general", CaseID: "senate-1", Summary: "S", Reasoning: "R", Implementation: "I"}
+	_, err := CreateBeadForVerdict(context.Background(), r, "/tmp/workspace", v)
+	if err == nil {
+		t.Fatal("expected error for unparsable bead ID")
+	}
+}
+
+func TestCreateBeadForVerdictDefaultWorkspace(t *testing.T) {
+	r := &fakeRunner{out: "pol-abc\n"}
+	v := core.Verdict{
+		Binding:        true,
+		Verdict:        core.DecisionApprove,
+		Type:           "general",
+		CaseID:         "senate-ws",
+		Summary:        "Test workspace default",
+		Reasoning:      "R",
+		Implementation: "I",
+		Judge:          "claude:opus",
+		FiledAt:        time.Now().UTC().Format(time.RFC3339),
+		VerdictAt:      time.Now().UTC().Format(time.RFC3339),
+	}
+	res, err := CreateBeadForVerdict(context.Background(), r, "", v)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.BeadID != "pol-abc" {
+		t.Fatalf("expected pol-abc, got %q", res.BeadID)
+	}
+	if r.dir == "" {
+		t.Fatal("expected workspace dir to be set by default")
+	}
+}
+
+func TestParseBeadIDEmpty(t *testing.T) {
+	if got := parseBeadID(""); got != "" {
+		t.Fatalf("expected empty, got %q", got)
+	}
+}
+
+func TestParseBeadIDMultiline(t *testing.T) {
+	out := "Creating bead...\nDone\npol-xyz-123\n"
+	if got := parseBeadID(out); got != "pol-xyz-123" {
+		t.Fatalf("expected pol-xyz-123 from multiline, got %q", got)
+	}
+}
+
+func TestInferTargetSystem(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"rule_evolution", "truthsayer"},
+		{"gate_criteria", "centurion"},
+		{"priority_triage", "athena"},
+		{"dispute_resolution", "athena"},
+		{"general", "athena"},
+		{"", "athena"},
+	}
+	for _, tt := range tests {
+		if got := inferTargetSystem(tt.input); got != tt.want {
+			t.Errorf("inferTargetSystem(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestTrimTo(t *testing.T) {
+	tests := []struct {
+		input string
+		max   int
+		want  string
+	}{
+		{"short", 10, "short"},
+		{"hello world", 5, "hell..."},
+		{"", 5, ""},
+		{"ab", 1, ""},
+		{"exactly10!", 10, "exactly10!"},
+	}
+	for _, tt := range tests {
+		if got := trimTo(tt.input, tt.max); got != tt.want {
+			t.Errorf("trimTo(%q, %d) = %q, want %q", tt.input, tt.max, got, tt.want)
+		}
+	}
+}
+
+func TestCreateBeadForVerdictTitleFormat(t *testing.T) {
+	r := &fakeRunner{out: "athena-title\n"}
+	v := core.Verdict{
+		CaseID:         "senate-fmt",
+		FiledAt:        time.Now().UTC().Format(time.RFC3339),
+		VerdictAt:      time.Now().UTC().Format(time.RFC3339),
+		Type:           "gate_criteria",
+		Summary:        "Add coverage threshold",
+		Verdict:        core.DecisionApprove,
+		Reasoning:      "Coverage matters",
+		Implementation: "Set min 80%",
+		Binding:        true,
+		Judge:          "claude:sonnet",
+	}
+	res, err := CreateBeadForVerdict(context.Background(), r, "/tmp/w", v)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.Title == "" {
+		t.Fatal("expected non-empty title")
+	}
+	if res.Status != "created" {
+		t.Fatalf("expected created, got %q", res.Status)
+	}
+}
