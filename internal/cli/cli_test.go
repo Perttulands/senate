@@ -1,19 +1,856 @@
 package cli
 
-import "testing"
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/Perttulands/senate/internal/core"
+	"github.com/Perttulands/senate/internal/precedent"
+	"github.com/Perttulands/senate/internal/store"
+)
+
+// --- helpers for capturing stdout/stderr ---
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	fn()
+	w.Close()
+	os.Stdout = old
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	return buf.String()
+}
+
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+	fn()
+	w.Close()
+	os.Stderr = old
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	return buf.String()
+}
+
+// --- Run dispatcher ---
+
+func TestRun_NoArgs(t *testing.T) {
+	code := Run([]string{"senate"})
+	if code != 1 {
+		t.Fatalf("expected exit code 1, got %d", code)
+	}
+}
+
+func TestRun_EmptyArgs(t *testing.T) {
+	code := Run([]string{})
+	if code != 1 {
+		t.Fatalf("expected exit code 1, got %d", code)
+	}
+}
+
+func TestRun_Help(t *testing.T) {
+	for _, flag := range []string{"help", "-h", "--help"} {
+		out := captureStdout(t, func() {
+			code := Run([]string{"senate", flag})
+			if code != 0 {
+				t.Errorf("help flag %q: expected exit 0, got %d", flag, code)
+			}
+		})
+		if !strings.Contains(out, "senate") {
+			t.Errorf("help flag %q: expected usage output", flag)
+		}
+	}
+}
+
+func TestRun_Version(t *testing.T) {
+	out := captureStdout(t, func() {
+		code := Run([]string{"senate", "version"})
+		if code != 0 {
+			t.Fatalf("expected exit 0, got %d", code)
+		}
+	})
+	if !strings.Contains(out, Version) {
+		t.Errorf("version output should contain %q, got %q", Version, out)
+	}
+}
+
+func TestRun_UnknownCommand(t *testing.T) {
+	code := Run([]string{"senate", "bogus"})
+	if code != 1 {
+		t.Fatalf("expected exit code 1, got %d", code)
+	}
+}
+
+// --- cmdFileCase ---
+
+func TestCmdFileCase_MissingType(t *testing.T) {
+	stateDir := t.TempDir()
+	code := cmdFileCase([]string{
+		"--state-dir", stateDir,
+		"--summary", "Test summary",
+		"--question", "Test question?",
+	})
+	if code != 1 {
+		t.Fatalf("expected exit 1 for missing --type, got %d", code)
+	}
+}
+
+func TestCmdFileCase_MissingSummary(t *testing.T) {
+	stateDir := t.TempDir()
+	code := cmdFileCase([]string{
+		"--state-dir", stateDir,
+		"--type", "general",
+		"--question", "Test question?",
+	})
+	if code != 1 {
+		t.Fatalf("expected exit 1 for missing --summary, got %d", code)
+	}
+}
+
+func TestCmdFileCase_MissingQuestion(t *testing.T) {
+	stateDir := t.TempDir()
+	code := cmdFileCase([]string{
+		"--state-dir", stateDir,
+		"--type", "general",
+		"--summary", "Test summary",
+	})
+	if code != 1 {
+		t.Fatalf("expected exit 1 for missing --question, got %d", code)
+	}
+}
+
+func TestCmdFileCase_InvalidType(t *testing.T) {
+	stateDir := t.TempDir()
+	code := cmdFileCase([]string{
+		"--state-dir", stateDir,
+		"--type", "invalid_type",
+		"--summary", "Test summary",
+		"--question", "Test question?",
+	})
+	if code != 1 {
+		t.Fatalf("expected exit 1 for invalid type, got %d", code)
+	}
+}
+
+func TestCmdFileCase_Success(t *testing.T) {
+	stateDir := t.TempDir()
+	var code int
+	out := captureStdout(t, func() {
+		code = cmdFileCase([]string{
+			"--state-dir", stateDir,
+			"--type", "general",
+			"--summary", "Test summary",
+			"--question", "Should we do this?",
+			"--filed-by", "tester",
+		})
+	})
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d", code)
+	}
+	caseID := strings.TrimSpace(out)
+	if !strings.HasPrefix(caseID, "senate-") {
+		t.Fatalf("expected case ID starting with senate-, got %q", caseID)
+	}
+
+	// Verify case file was written
+	d, err := store.New(stateDir)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	c, err := d.LoadCase(caseID)
+	if err != nil {
+		t.Fatalf("load case: %v", err)
+	}
+	if c.Summary != "Test summary" {
+		t.Errorf("summary = %q, want %q", c.Summary, "Test summary")
+	}
+	if c.FiledBy != "tester" {
+		t.Errorf("filed_by = %q, want %q", c.FiledBy, "tester")
+	}
+}
+
+func TestCmdFileCase_AllValidTypes(t *testing.T) {
+	validTypes := []string{"rule_evolution", "gate_criteria", "dispute", "priority", "architecture", "general"}
+	for _, typ := range validTypes {
+		stateDir := t.TempDir()
+		var code int
+		captureStdout(t, func() {
+			code = cmdFileCase([]string{
+				"--state-dir", stateDir,
+				"--type", typ,
+				"--summary", "Test",
+				"--question", "Question?",
+			})
+		})
+		if code != 0 {
+			t.Errorf("type %q: expected exit 0, got %d", typ, code)
+		}
+	}
+}
+
+func TestCmdFileCase_WithEvidence(t *testing.T) {
+	stateDir := t.TempDir()
+	var code int
+	out := captureStdout(t, func() {
+		code = cmdFileCase([]string{
+			"--state-dir", stateDir,
+			"--type", "general",
+			"--summary", "Test",
+			"--question", "Question?",
+			"--evidence", "file1.md",
+			"--evidence", "file2.md",
+		})
+	})
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d", code)
+	}
+	caseID := strings.TrimSpace(out)
+	d, _ := store.New(stateDir)
+	c, err := d.LoadCase(caseID)
+	if err != nil {
+		t.Fatalf("load case: %v", err)
+	}
+	if len(c.Evidence) != 2 {
+		t.Errorf("expected 2 evidence items, got %d", len(c.Evidence))
+	}
+}
+
+// --- cmdPrecedent ---
+
+func TestCmdPrecedent_NoSubcommand(t *testing.T) {
+	code := cmdPrecedent([]string{})
+	if code != 1 {
+		t.Fatalf("expected exit 1 for no subcommand, got %d", code)
+	}
+}
+
+func TestCmdPrecedent_UnknownSubcommand(t *testing.T) {
+	code := cmdPrecedent([]string{"bogus"})
+	if code != 1 {
+		t.Fatalf("expected exit 1 for unknown subcommand, got %d", code)
+	}
+}
+
+func TestCmdPrecedent_SearchEmpty(t *testing.T) {
+	stateDir := t.TempDir()
+	// Initialize store so precedent dir exists
+	store.New(stateDir)
+
+	var code int
+	out := captureStdout(t, func() {
+		code = cmdPrecedent([]string{
+			"search", "--query", "anything", "--state-dir", stateDir,
+		})
+	})
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d", code)
+	}
+	if !strings.Contains(out, "no precedent matches") {
+		t.Errorf("expected 'no precedent matches', got %q", out)
+	}
+}
+
+func TestCmdPrecedent_SearchWithResults(t *testing.T) {
+	stateDir := t.TempDir()
+	d, _ := store.New(stateDir)
+	prec := precedent.New(d.PrecedentIndexPath())
+	now := time.Now().UTC()
+	prec.Add(precedent.Record{
+		CaseID:         "senate-test-1",
+		Type:           "general",
+		Summary:        "Coverage threshold debate",
+		Verdict:        core.DecisionApprove,
+		Reasoning:      "Good coverage improves quality",
+		Implementation: "Set threshold to 70%",
+		Binding:        true,
+		VerdictAt:      now.Format(time.RFC3339),
+		Judge:          "claude:test",
+	})
+
+	var code int
+	out := captureStdout(t, func() {
+		code = cmdPrecedent([]string{
+			"search", "--query", "coverage threshold", "--state-dir", stateDir,
+		})
+	})
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d", code)
+	}
+	if !strings.Contains(out, "senate-test-1") {
+		t.Errorf("expected to find senate-test-1 in output, got %q", out)
+	}
+}
+
+func TestCmdPrecedent_SearchJSON(t *testing.T) {
+	stateDir := t.TempDir()
+	d, _ := store.New(stateDir)
+	prec := precedent.New(d.PrecedentIndexPath())
+	now := time.Now().UTC()
+	prec.Add(precedent.Record{
+		CaseID:         "senate-json-1",
+		Type:           "general",
+		Summary:        "JSON output test",
+		Verdict:        core.DecisionReject,
+		Reasoning:      "Reasoning",
+		Implementation: "Implementation",
+		Binding:        true,
+		VerdictAt:      now.Format(time.RFC3339),
+		Judge:          "claude:test",
+	})
+
+	var code int
+	out := captureStdout(t, func() {
+		code = cmdPrecedent([]string{
+			"search", "--query", "JSON output", "--state-dir", stateDir, "--json",
+		})
+	})
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d", code)
+	}
+	// Verify it's valid JSON array
+	var results []precedent.Record
+	if err := json.Unmarshal([]byte(out), &results); err != nil {
+		t.Fatalf("output is not valid JSON: %v\nOutput: %s", err, out)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].CaseID != "senate-json-1" {
+		t.Errorf("result case_id = %q, want senate-json-1", results[0].CaseID)
+	}
+}
+
+func TestCmdPrecedent_SearchWithTypeFilter(t *testing.T) {
+	stateDir := t.TempDir()
+	d, _ := store.New(stateDir)
+	prec := precedent.New(d.PrecedentIndexPath())
+	now := time.Now().UTC()
+	prec.Add(precedent.Record{
+		CaseID: "senate-t1", Type: "rule_evolution", Summary: "Rule test",
+		Verdict: core.DecisionAmend, Reasoning: "R", Implementation: "I",
+		Binding: true, VerdictAt: now.Format(time.RFC3339), Judge: "test",
+	})
+	prec.Add(precedent.Record{
+		CaseID: "senate-t2", Type: "general", Summary: "General test",
+		Verdict: core.DecisionApprove, Reasoning: "R", Implementation: "I",
+		Binding: true, VerdictAt: now.Format(time.RFC3339), Judge: "test",
+	})
+
+	var code int
+	out := captureStdout(t, func() {
+		code = cmdPrecedent([]string{
+			"search", "--query", "test", "--type", "rule_evolution", "--state-dir", stateDir,
+		})
+	})
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d", code)
+	}
+	if !strings.Contains(out, "senate-t1") {
+		t.Error("expected senate-t1 in filtered results")
+	}
+	if strings.Contains(out, "senate-t2") {
+		t.Error("senate-t2 should be filtered out by type")
+	}
+}
+
+// --- cmdHandoff ---
+
+func TestCmdHandoff_MissingCaseID(t *testing.T) {
+	code := cmdHandoff([]string{})
+	if code != 1 {
+		t.Fatalf("expected exit 1, got %d", code)
+	}
+}
+
+func TestCmdHandoff_VerdictNotFound(t *testing.T) {
+	stateDir := t.TempDir()
+	store.New(stateDir)
+	code := cmdHandoff([]string{"--case-id", "nonexistent", "--state-dir", stateDir})
+	if code != 1 {
+		t.Fatalf("expected exit 1 for missing verdict, got %d", code)
+	}
+}
+
+func TestCmdHandoff_AlreadyHandedOff(t *testing.T) {
+	stateDir := t.TempDir()
+	d, _ := store.New(stateDir)
+	now := time.Now().UTC()
+	v := core.Verdict{
+		CaseID:    "senate-ho-1",
+		FiledAt:   now.Format(time.RFC3339),
+		VerdictAt: now.Format(time.RFC3339),
+		Type:      "general",
+		Summary:   "Already handed off",
+		Verdict:   core.DecisionApprove,
+		Reasoning: "R",
+		Judge:     "test",
+		Binding:   true,
+		Handoff: &core.Handoff{
+			System:    "athena",
+			BeadID:    "existing-bead-123",
+			Status:    "created",
+			CreatedAt: now.Format(time.RFC3339),
+		},
+	}
+	d.SaveVerdict(v)
+
+	var code int
+	out := captureStdout(t, func() {
+		code = cmdHandoff([]string{"--case-id", "senate-ho-1", "--state-dir", stateDir})
+	})
+	if code != 0 {
+		t.Fatalf("expected exit 0 for already handed off, got %d", code)
+	}
+	if !strings.Contains(out, "existing-bead-123") {
+		t.Errorf("expected existing bead ID in output, got %q", out)
+	}
+}
+
+// --- loadCase ---
+
+func TestLoadCase_QuickQuestion(t *testing.T) {
+	c, err := loadCase("", "Should we do this?", "tester")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if c.Question != "Should we do this?" {
+		t.Errorf("question = %q", c.Question)
+	}
+	if c.Type != "general" {
+		t.Errorf("type = %q, want general", c.Type)
+	}
+	if c.FiledBy != "tester" {
+		t.Errorf("filed_by = %q, want tester", c.FiledBy)
+	}
+}
+
+func TestLoadCase_NoCaseNoQuestion(t *testing.T) {
+	_, err := loadCase("", "", "")
+	if err == nil {
+		t.Fatal("expected error for no case and no question")
+	}
+}
+
+func TestLoadCase_FromFile(t *testing.T) {
+	caseFile := filepath.Join(t.TempDir(), "case.json")
+	c := core.Case{
+		ID:       "senate-file-1",
+		Type:     "architecture",
+		Summary:  "File-based case",
+		Question: "From file?",
+		FiledAt:  time.Now().UTC().Format(time.RFC3339),
+	}
+	data, _ := json.Marshal(c)
+	os.WriteFile(caseFile, data, 0644)
+
+	loaded, err := loadCase(caseFile, "", "override-filer")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if loaded.ID != "senate-file-1" {
+		t.Errorf("id = %q", loaded.ID)
+	}
+	if loaded.FiledBy != "override-filer" {
+		t.Errorf("filed_by should be set when empty in file, got %q", loaded.FiledBy)
+	}
+}
+
+func TestLoadCase_FromFileWithFiledBy(t *testing.T) {
+	caseFile := filepath.Join(t.TempDir(), "case.json")
+	c := core.Case{
+		ID:       "senate-file-2",
+		Type:     "general",
+		Summary:  "Has filer",
+		Question: "Q?",
+		FiledAt:  time.Now().UTC().Format(time.RFC3339),
+		FiledBy:  "original-filer",
+	}
+	data, _ := json.Marshal(c)
+	os.WriteFile(caseFile, data, 0644)
+
+	loaded, err := loadCase(caseFile, "", "override")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Should keep original filer since it's not empty
+	if loaded.FiledBy != "original-filer" {
+		t.Errorf("filed_by = %q, want original-filer", loaded.FiledBy)
+	}
+}
+
+func TestLoadCase_InvalidJSON(t *testing.T) {
+	caseFile := filepath.Join(t.TempDir(), "bad.json")
+	os.WriteFile(caseFile, []byte("not json"), 0644)
+	_, err := loadCase(caseFile, "", "")
+	if err == nil {
+		t.Fatal("expected error for invalid JSON")
+	}
+}
+
+func TestLoadCase_MissingFile(t *testing.T) {
+	_, err := loadCase("/nonexistent/case.json", "", "")
+	if err == nil {
+		t.Fatal("expected error for missing file")
+	}
+}
+
+// --- Helper functions ---
+
+func TestParseFlags(t *testing.T) {
+	flags := parseFlags([]string{"--type", "general", "--agents", "3", "--verbose"})
+	if flags["type"] != "general" {
+		t.Errorf("type = %q", flags["type"])
+	}
+	if flags["agents"] != "3" {
+		t.Errorf("agents = %q", flags["agents"])
+	}
+	if flags["verbose"] != "true" {
+		t.Errorf("verbose = %q", flags["verbose"])
+	}
+}
+
+func TestParseFlags_Empty(t *testing.T) {
+	flags := parseFlags([]string{})
+	if len(flags) != 0 {
+		t.Errorf("expected empty flags, got %v", flags)
+	}
+}
+
+func TestParseFlags_PositionalIgnored(t *testing.T) {
+	flags := parseFlags([]string{"positional", "--key", "value"})
+	if flags["key"] != "value" {
+		t.Errorf("key = %q", flags["key"])
+	}
+	if _, ok := flags["positional"]; ok {
+		t.Error("positional arg should not be in flags")
+	}
+}
+
+func TestFlagBool(t *testing.T) {
+	args := []string{"--json", "--verbose", "positional"}
+	if !flagBool(args, "--json") {
+		t.Error("expected --json to be true")
+	}
+	if !flagBool(args, "--verbose") {
+		t.Error("expected --verbose to be true")
+	}
+	if flagBool(args, "--missing") {
+		t.Error("expected --missing to be false")
+	}
+}
+
+func TestParseInt(t *testing.T) {
+	tests := []struct {
+		raw      string
+		fallback int
+		want     int
+	}{
+		{"3", 5, 3},
+		{"", 5, 5},
+		{"0", 5, 5},
+		{"-1", 5, 5},
+		{"abc", 5, 5},
+		{" 7 ", 5, 7},
+	}
+	for _, tt := range tests {
+		got := parseInt(tt.raw, tt.fallback)
+		if got != tt.want {
+			t.Errorf("parseInt(%q, %d) = %d, want %d", tt.raw, tt.fallback, got, tt.want)
+		}
+	}
+}
 
 func TestParseDecision(t *testing.T) {
-	if got := parseDecision("approve"); got == "" {
-		t.Fatal("expected parsed decision")
+	tests := []struct {
+		input string
+		want  core.Decision
+	}{
+		{"approve", core.DecisionApprove},
+		{"approved", core.DecisionApprove},
+		{"reject", core.DecisionReject},
+		{"rejected", core.DecisionReject},
+		{"amend", core.DecisionAmend},
+		{"amended", core.DecisionAmend},
+		{"defer", core.DecisionDefer},
+		{"deferred", core.DecisionDefer},
+		{"APPROVE", core.DecisionApprove},
+		{"Rejected", core.DecisionReject},
+		{"nonsense", ""},
+		{"", ""},
+		{"  approve  ", core.DecisionApprove},
 	}
-	if got := parseDecision("nonsense"); got != "" {
-		t.Fatalf("expected empty decision for nonsense, got %s", got)
+	for _, tt := range tests {
+		got := parseDecision(tt.input)
+		if got != tt.want {
+			t.Errorf("parseDecision(%q) = %q, want %q", tt.input, got, tt.want)
+		}
 	}
 }
 
 func TestSplitCSV(t *testing.T) {
-	parts := splitCSV("a, b,,c")
-	if len(parts) != 3 {
-		t.Fatalf("expected 3 parts, got %d", len(parts))
+	tests := []struct {
+		input string
+		want  int
+	}{
+		{"a, b,,c", 3},
+		{"", 0},
+		{"   ", 0},
+		{"single", 1},
+		{" a , b , c , d ", 4},
+	}
+	for _, tt := range tests {
+		got := splitCSV(tt.input)
+		if len(got) != tt.want {
+			t.Errorf("splitCSV(%q) = %d parts, want %d", tt.input, len(got), tt.want)
+		}
 	}
 }
+
+func TestExtractPositionalArg(t *testing.T) {
+	tests := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"question here"}, "question here"},
+		{[]string{"--flag", "value", "positional"}, "positional"},
+		{[]string{"--flag", "value"}, ""},
+		{[]string{}, ""},
+		{[]string{"--solo-flag", "arg"}, ""},  // "arg" consumed as flag value
+	}
+	for _, tt := range tests {
+		got := extractPositionalArg(tt.args)
+		if got != tt.want {
+			t.Errorf("extractPositionalArg(%v) = %q, want %q", tt.args, got, tt.want)
+		}
+	}
+}
+
+func TestCollectEvidence(t *testing.T) {
+	args := []string{"--evidence", "file1.md", "--type", "general", "--evidence", "file2.md"}
+	ev := collectEvidence(args)
+	if len(ev) != 2 {
+		t.Fatalf("expected 2 evidence items, got %d", len(ev))
+	}
+	if ev[0] != "file1.md" || ev[1] != "file2.md" {
+		t.Errorf("evidence = %v", ev)
+	}
+}
+
+func TestCollectEvidence_Empty(t *testing.T) {
+	ev := collectEvidence([]string{"--type", "general"})
+	if len(ev) != 0 {
+		t.Errorf("expected no evidence, got %v", ev)
+	}
+}
+
+func TestCollectEvidence_EmptyValue(t *testing.T) {
+	ev := collectEvidence([]string{"--evidence", "  "})
+	if len(ev) != 0 {
+		t.Errorf("expected no evidence for whitespace value, got %v", ev)
+	}
+}
+
+func TestContains(t *testing.T) {
+	slice := []string{"a", "b", "c"}
+	if !contains(slice, "b") {
+		t.Error("expected true for 'b'")
+	}
+	if contains(slice, "d") {
+		t.Error("expected false for 'd'")
+	}
+	if contains(nil, "a") {
+		t.Error("expected false for nil slice")
+	}
+}
+
+func TestResolveStateDir(t *testing.T) {
+	// Explicit flag
+	if got := resolveStateDir("/custom/path"); got != "/custom/path" {
+		t.Errorf("expected /custom/path, got %q", got)
+	}
+
+	// Empty falls back to env or "state"
+	old := os.Getenv("SENATE_STATE_DIR")
+	os.Setenv("SENATE_STATE_DIR", "/env/path")
+	defer os.Setenv("SENATE_STATE_DIR", old)
+	if got := resolveStateDir(""); got != "/env/path" {
+		t.Errorf("expected /env/path from env, got %q", got)
+	}
+
+	os.Setenv("SENATE_STATE_DIR", "")
+	if got := resolveStateDir(""); got != "state" {
+		t.Errorf("expected 'state' default, got %q", got)
+	}
+}
+
+func TestInferTargetSystem(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"rule_evolution", "truthsayer"},
+		{"gate_criteria", "centurion"},
+		{"general", "athena"},
+		{"", "athena"},
+		{"unknown", "athena"},
+	}
+	for _, tt := range tests {
+		got := inferTargetSystem(tt.input)
+		if got != tt.want {
+			t.Errorf("inferTargetSystem(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestUsage(t *testing.T) {
+	out := captureStdout(t, func() {
+		usage()
+	})
+	required := []string{"senate", "ask", "start", "health", "file-case", "precedent", "handoff", "version"}
+	for _, word := range required {
+		if !strings.Contains(out, word) {
+			t.Errorf("usage output missing %q", word)
+		}
+	}
+}
+
+func TestOutputJSON(t *testing.T) {
+	out := captureStdout(t, func() {
+		outputJSON(map[string]string{"key": "value"})
+	})
+	var m map[string]string
+	if err := json.Unmarshal([]byte(out), &m); err != nil {
+		t.Fatalf("outputJSON produced invalid JSON: %v", err)
+	}
+	if m["key"] != "value" {
+		t.Errorf("key = %q, want 'value'", m["key"])
+	}
+}
+
+func TestErrorf(t *testing.T) {
+	out := captureStderr(t, func() {
+		errorf("test %s %d", "error", 42)
+	})
+	if !strings.Contains(out, "senate: test error 42") {
+		t.Errorf("errorf output = %q", out)
+	}
+}
+
+// --- cmdAsk validation path (no claude needed) ---
+
+func TestCmdAsk_NoQuestion(t *testing.T) {
+	code := cmdAsk([]string{})
+	if code != 1 {
+		t.Fatalf("expected exit 1 for no question, got %d", code)
+	}
+}
+
+// --- Run integration: file-case through Run ---
+
+func TestRun_FileCase_EndToEnd(t *testing.T) {
+	stateDir := t.TempDir()
+	var code int
+	out := captureStdout(t, func() {
+		code = Run([]string{"senate", "file-case",
+			"--state-dir", stateDir,
+			"--type", "architecture",
+			"--summary", "End to end test",
+			"--question", "Does Run dispatch correctly?",
+			"--filed-by", "test",
+		})
+	})
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d", code)
+	}
+	caseID := strings.TrimSpace(out)
+	if !strings.HasPrefix(caseID, "senate-") {
+		t.Fatalf("expected senate- prefix, got %q", caseID)
+	}
+}
+
+// --- Run integration: precedent through Run ---
+
+func TestRun_Precedent_EndToEnd(t *testing.T) {
+	stateDir := t.TempDir()
+	d, _ := store.New(stateDir)
+	prec := precedent.New(d.PrecedentIndexPath())
+	now := time.Now().UTC()
+	prec.Add(precedent.Record{
+		CaseID: "senate-e2e", Type: "general", Summary: "E2E precedent",
+		Verdict: core.DecisionApprove, Reasoning: "R", Implementation: "I",
+		Binding: true, VerdictAt: now.Format(time.RFC3339), Judge: "test",
+	})
+
+	var code int
+	out := captureStdout(t, func() {
+		code = Run([]string{"senate", "precedent", "search",
+			"--query", "E2E", "--state-dir", stateDir,
+		})
+	})
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d", code)
+	}
+	if !strings.Contains(out, "senate-e2e") {
+		t.Errorf("expected senate-e2e in output: %q", out)
+	}
+}
+
+// --- Run integration: handoff through Run ---
+
+func TestRun_Handoff_MissingCaseID(t *testing.T) {
+	code := Run([]string{"senate", "handoff"})
+	if code != 1 {
+		t.Fatalf("expected exit 1, got %d", code)
+	}
+}
+
+// --- Version constant ---
+
+func TestVersionNotEmpty(t *testing.T) {
+	if Version == "" {
+		t.Fatal("Version should not be empty")
+	}
+	parts := strings.Split(Version, ".")
+	if len(parts) != 3 {
+		t.Errorf("Version %q should be semver (x.y.z)", Version)
+	}
+}
+
+// Ensure countDecisions is not needed — just verify the exported types compile
+func TestAskResultStructure(t *testing.T) {
+	r := AskResult{
+		CaseID:    "test",
+		Verdict:   "approved",
+		Reasoning: "r",
+		Positions: []AskPosition{{Senator: "s", Stance: "approved", KeyArgument: "a"}},
+	}
+	data, err := json.Marshal(r)
+	if err != nil {
+		t.Fatalf("marshal AskResult: %v", err)
+	}
+	var decoded AskResult
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("unmarshal AskResult: %v", err)
+	}
+	if decoded.CaseID != "test" {
+		t.Errorf("decoded case_id = %q", decoded.CaseID)
+	}
+	if len(decoded.Positions) != 1 {
+		t.Errorf("expected 1 position, got %d", len(decoded.Positions))
+	}
+}
+
+// Suppress unused import warnings
+var _ = fmt.Sprintf
