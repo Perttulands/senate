@@ -209,9 +209,7 @@ func scoreRecord(rec Record, queryTokens []string) int {
 	}, " "))
 	score := 0
 	for _, q := range queryTokens {
-		if strings.Contains(bag, q) {
-			score++
-		}
+		score += strings.Count(bag, q)
 	}
 	return score
 }
