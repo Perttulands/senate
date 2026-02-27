@@ -124,7 +124,11 @@ func cmdAsk(args []string) int {
 	// Extract question: positional arg or stdin pipe
 	question := extractPositionalArg(args)
 	if question == "" {
-		stat, _ := os.Stdin.Stat()
+		stat, err := os.Stdin.Stat()
+		if err != nil {
+			errorf("stat stdin: %v", err)
+			return 1
+		}
 		if (stat.Mode() & os.ModeCharDevice) == 0 {
 			data, err := os.ReadFile("/dev/stdin")
 			if err == nil {

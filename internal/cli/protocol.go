@@ -139,7 +139,10 @@ When asked for your position, respond with ONLY a JSON object (no markdown fenci
 		}
 	}
 
-	data, _ := json.Marshal(agents)
+	data, err := json.Marshal(agents)
+	if err != nil {
+		return "{}"
+	}
 	return string(data)
 }
 
