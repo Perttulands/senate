@@ -186,6 +186,56 @@ func TestNewWithEmptyRoot(t *testing.T) {
 	}
 }
 
+func TestSaveCaseValidationError(t *testing.T) {
+	d, err := New(t.TempDir())
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	// Invalid case (missing required fields)
+	err = d.SaveCase(core.Case{})
+	if err == nil {
+		t.Fatal("expected validation error for empty case")
+	}
+}
+
+func TestSaveVerdictValidationError(t *testing.T) {
+	d, err := New(t.TempDir())
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	// Invalid verdict (missing required fields)
+	err = d.SaveVerdict(core.Verdict{})
+	if err == nil {
+		t.Fatal("expected validation error for empty verdict")
+	}
+}
+
+func TestLoadCaseCorruptJSON(t *testing.T) {
+	d, err := New(t.TempDir())
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	// Write corrupt JSON to the case file
+	os.WriteFile(d.CasePath("corrupt"), []byte("not json"), 0644)
+	_, err = d.LoadCase("corrupt")
+	if err == nil {
+		t.Fatal("expected error for corrupt case JSON")
+	}
+}
+
+func TestLoadVerdictCorruptJSON(t *testing.T) {
+	d, err := New(t.TempDir())
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	// Write corrupt JSON to the verdict file
+	os.WriteFile(d.VerdictPath("corrupt"), []byte("not json"), 0644)
+	_, err = d.LoadVerdict("corrupt")
+	if err == nil {
+		t.Fatal("expected error for corrupt verdict JSON")
+	}
+}
+
 func TestPaths(t *testing.T) {
 	d, err := New(t.TempDir())
 	if err != nil {

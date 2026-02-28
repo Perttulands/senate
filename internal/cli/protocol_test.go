@@ -223,6 +223,19 @@ func TestWriteTempFiles_Success(t *testing.T) {
 	}
 }
 
+func TestWriteTempFiles_MkdirError(t *testing.T) {
+	// Set TMPDIR to a path that doesn't exist and can't be created
+	t.Setenv("TMPDIR", "/dev/null/nonexistent")
+
+	_, _, err := WriteTempFiles("test prompt")
+	if err == nil {
+		t.Fatal("expected error when TMPDIR is invalid")
+	}
+	if !strings.Contains(err.Error(), "create temp dir") {
+		t.Errorf("error should mention 'create temp dir', got: %v", err)
+	}
+}
+
 func TestWriteTempFiles_EmptyPrompt(t *testing.T) {
 	promptFile, tempDir, err := WriteTempFiles("")
 	if err != nil {

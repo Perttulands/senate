@@ -852,5 +852,335 @@ func TestAskResultStructure(t *testing.T) {
 	}
 }
 
+// --- cmdHealth ---
+
+func TestCmdHealth_Basic(t *testing.T) {
+	var code int
+	out := captureStdout(t, func() {
+		code = cmdHealth([]string{})
+	})
+	// Exit code depends on whether claude CLI is installed
+	if code != 0 && code != 1 {
+		t.Fatalf("expected exit 0 or 1, got %d", code)
+	}
+	if !strings.Contains(out, "Claude CLI") {
+		t.Errorf("expected 'Claude CLI' in output, got %q", out)
+	}
+}
+
+func TestCmdHealth_Verbose(t *testing.T) {
+	var code int
+	out := captureStdout(t, func() {
+		code = cmdHealth([]string{"--verbose"})
+	})
+	if code != 0 && code != 1 {
+		t.Fatalf("expected exit 0 or 1, got %d", code)
+	}
+	// Verbose mode should show either "Path:" or "Error:" depending on whether claude is installed
+	if !strings.Contains(out, "Path:") && !strings.Contains(out, "Error:") {
+		t.Errorf("verbose output should contain 'Path:' or 'Error:', got %q", out)
+	}
+}
+
+// --- cmdHandoff extended ---
+
+func TestCmdHandoff_DeferredVerdict(t *testing.T) {
+	stateDir := t.TempDir()
+	d, _ := store.New(stateDir)
+	now := time.Now().UTC()
+	v := core.Verdict{
+		CaseID:    "senate-deferred",
+		FiledAt:   now.Format(time.RFC3339),
+		VerdictAt: now.Format(time.RFC3339),
+		Type:      "general",
+		Summary:   "Deferred verdict for handoff",
+		Verdict:   core.DecisionDefer,
+		Reasoning: "Need more information",
+		Judge:     "test",
+		Binding:   true,
+	}
+	d.SaveVerdict(v)
+
+	var code int
+	out := captureStdout(t, func() {
+		code = cmdHandoff([]string{"--case-id", "senate-deferred", "--state-dir", stateDir})
+	})
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d", code)
+	}
+	if !strings.Contains(out, "skipped") {
+		t.Errorf("expected 'skipped' in output, got %q", out)
+	}
+}
+
+func TestCmdHandoff_NonBindingVerdict(t *testing.T) {
+	stateDir := t.TempDir()
+	d, _ := store.New(stateDir)
+	now := time.Now().UTC()
+	v := core.Verdict{
+		CaseID:    "senate-nonbind",
+		FiledAt:   now.Format(time.RFC3339),
+		VerdictAt: now.Format(time.RFC3339),
+		Type:      "general",
+		Summary:   "Non-binding verdict",
+		Verdict:   core.DecisionApprove,
+		Reasoning: "Approved but non-binding",
+		Judge:     "test",
+		Binding:   false,
+	}
+	d.SaveVerdict(v)
+
+	var code int
+	out := captureStdout(t, func() {
+		code = cmdHandoff([]string{"--case-id", "senate-nonbind", "--state-dir", stateDir})
+	})
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d", code)
+	}
+	if !strings.Contains(out, "skipped") {
+		t.Errorf("expected 'skipped' in output, got %q", out)
+	}
+}
+
+func TestCmdHandoff_DeferredJSON(t *testing.T) {
+	stateDir := t.TempDir()
+	d, _ := store.New(stateDir)
+	now := time.Now().UTC()
+	v := core.Verdict{
+		CaseID:    "senate-def-json",
+		FiledAt:   now.Format(time.RFC3339),
+		VerdictAt: now.Format(time.RFC3339),
+		Type:      "general",
+		Summary:   "Deferred for JSON",
+		Verdict:   core.DecisionDefer,
+		Reasoning: "R",
+		Judge:     "test",
+		Binding:   true,
+	}
+	d.SaveVerdict(v)
+
+	var code int
+	out := captureStdout(t, func() {
+		code = cmdHandoff([]string{"--case-id", "senate-def-json", "--state-dir", stateDir, "--json"})
+	})
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d", code)
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatalf("output is not valid JSON: %v\nOutput: %s", err, out)
+	}
+	if result["Status"] != "skipped" {
+		t.Errorf("status = %v, want skipped", result["Status"])
+	}
+}
+
+func TestCmdHandoff_RunThroughDispatcher(t *testing.T) {
+	stateDir := t.TempDir()
+	d, _ := store.New(stateDir)
+	now := time.Now().UTC()
+	v := core.Verdict{
+		CaseID:    "senate-dispatch",
+		FiledAt:   now.Format(time.RFC3339),
+		VerdictAt: now.Format(time.RFC3339),
+		Type:      "general",
+		Summary:   "Dispatch test",
+		Verdict:   core.DecisionDefer,
+		Reasoning: "R",
+		Judge:     "test",
+		Binding:   true,
+	}
+	d.SaveVerdict(v)
+
+	var code int
+	out := captureStdout(t, func() {
+		code = Run([]string{"senate", "handoff", "--case-id", "senate-dispatch", "--state-dir", stateDir})
+	})
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d", code)
+	}
+	if !strings.Contains(out, "skipped") {
+		t.Errorf("expected 'skipped' in output, got %q", out)
+	}
+}
+
+// --- cmdFileCase extended ---
+
+func TestCmdFileCase_BadStoreDir(t *testing.T) {
+	// Use /dev/null as state dir — can't create subdirectories
+	code := cmdFileCase([]string{
+		"--state-dir", "/dev/null/impossible",
+		"--type", "general",
+		"--summary", "Test",
+		"--question", "Q?",
+	})
+	if code != 1 {
+		t.Fatalf("expected exit 1 for bad store dir, got %d", code)
+	}
+}
+
+// --- cmdAsk extended ---
+
+func TestCmdAsk_WithQuestionButBadStoreDir(t *testing.T) {
+	code := cmdAsk([]string{"my question", "--state-dir", "/dev/null/impossible"})
+	if code != 1 {
+		t.Fatalf("expected exit 1 for bad store dir, got %d", code)
+	}
+}
+
+// --- Verdict pipeline: the core workflow ---
+
+// TestVerdictPipelineRoundTrip simulates the complete post-deliberation workflow:
+// Claude writes a verdict JSON → senate parses it → stores verdict → indexes as precedent → searchable.
+// This is the most critical data flow in senate. If this breaks, agents get no verdicts.
+func TestVerdictPipelineRoundTrip(t *testing.T) {
+	stateDir := t.TempDir()
+	d, err := store.New(stateDir)
+	if err != nil {
+		t.Fatalf("init store: %v", err)
+	}
+
+	// Simulate what Claude writes as verdict output — this is the exact format
+	// that cmdAsk expects to read from the verdict file after Claude exits.
+	verdictJSON := `{
+		"case_id": "senate-pipeline-test",
+		"verdict": "approved",
+		"reasoning": "The caching approach using Redis is sound and well-tested in production",
+		"implementation": "1. Add Redis dependency\n2. Configure TTL\n3. Add cache invalidation",
+		"dissent": "One senator raised concerns about operational complexity",
+		"positions": [
+			{"senator": "pragmatist", "stance": "approved", "key_argument": "Redis is battle-tested"},
+			{"senator": "purist", "stance": "approved", "key_argument": "Clean separation of concerns"},
+			{"senator": "skeptic", "stance": "amended", "key_argument": "Need cache invalidation strategy"}
+		]
+	}`
+
+	// Parse — same logic as cmdAsk lines 209-215
+	var result AskResult
+	if err := json.Unmarshal([]byte(verdictJSON), &result); err != nil {
+		t.Fatalf("parse verdict JSON: %v", err)
+	}
+	if result.CaseID != "senate-pipeline-test" {
+		t.Errorf("case_id = %q", result.CaseID)
+	}
+	if len(result.Positions) != 3 {
+		t.Fatalf("expected 3 positions, got %d", len(result.Positions))
+	}
+
+	// Build verdict struct — same as cmdAsk lines 218-232
+	now := time.Now().UTC()
+	verdict := core.Verdict{
+		CaseID:         result.CaseID,
+		FiledAt:        now.Format(time.RFC3339),
+		VerdictAt:      now.Format(time.RFC3339),
+		Type:           "architecture",
+		Summary:        "Should we use Redis for caching?",
+		Verdict:        core.Decision(result.Verdict),
+		Reasoning:      result.Reasoning,
+		Implementation: result.Implementation,
+		Dissent:        result.Dissent,
+		Binding:        result.Verdict != "deferred",
+		Judge:          "claude-sonnet",
+	}
+
+	// Store verdict — same as cmdAsk line 231
+	if err := d.SaveVerdict(verdict); err != nil {
+		t.Fatalf("save verdict: %v", err)
+	}
+
+	// Load and verify persistence
+	loaded, err := d.LoadVerdict(result.CaseID)
+	if err != nil {
+		t.Fatalf("load verdict: %v", err)
+	}
+	if loaded.Verdict != core.DecisionApprove {
+		t.Errorf("loaded verdict = %q, want approved", loaded.Verdict)
+	}
+	if !loaded.Binding {
+		t.Error("approved verdict should be binding")
+	}
+	if loaded.Dissent == "" {
+		t.Error("dissent should be preserved through store round-trip")
+	}
+	if loaded.Implementation == "" {
+		t.Error("implementation should be preserved through store round-trip")
+	}
+
+	// Index as precedent — same as cmdAsk lines 236-239
+	prec := precedent.New(d.PrecedentIndexPath())
+	if err := prec.Add(precedent.FromVerdict(verdict)); err != nil {
+		t.Fatalf("add precedent: %v", err)
+	}
+
+	// Search — this is how agents find past decisions
+	results, err := prec.Search("Redis caching", precedent.SearchOptions{})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("verdict must be searchable as precedent after indexing")
+	}
+	if results[0].CaseID != "senate-pipeline-test" {
+		t.Errorf("precedent search returned wrong case: %q", results[0].CaseID)
+	}
+	if results[0].Verdict != core.DecisionApprove {
+		t.Errorf("precedent verdict = %q", results[0].Verdict)
+	}
+}
+
+// TestVerdictPipelineDeferredSkipsHandoff verifies the business rule:
+// deferred verdicts must not be binding and must not create handoff beads.
+// Breaking this would create spurious implementation tasks in Polis.
+func TestVerdictPipelineDeferredSkipsHandoff(t *testing.T) {
+	stateDir := t.TempDir()
+	d, err := store.New(stateDir)
+	if err != nil {
+		t.Fatalf("init store: %v", err)
+	}
+
+	verdictJSON := `{
+		"case_id": "senate-defer-pipeline",
+		"verdict": "deferred",
+		"reasoning": "Insufficient evidence to decide",
+		"implementation": "",
+		"dissent": "",
+		"positions": [{"senator": "skeptic", "stance": "deferred", "key_argument": "Need more data"}]
+	}`
+
+	var result AskResult
+	if err := json.Unmarshal([]byte(verdictJSON), &result); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	// This is the exact binding check from cmdAsk line 228
+	binding := result.Verdict != "deferred"
+	if binding {
+		t.Fatal("deferred verdict must not be binding — would create unwanted handoff beads")
+	}
+
+	// Build and store the verdict
+	now := time.Now().UTC()
+	verdict := core.Verdict{
+		CaseID:    result.CaseID,
+		FiledAt:   now.Format(time.RFC3339),
+		VerdictAt: now.Format(time.RFC3339),
+		Type:      "general",
+		Summary:   "Deferred question",
+		Verdict:   core.Decision(result.Verdict),
+		Reasoning: result.Reasoning,
+		Binding:   binding,
+		Judge:     "claude-sonnet",
+	}
+	if err := d.SaveVerdict(verdict); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	// Verify the stored verdict is not binding
+	loaded, _ := d.LoadVerdict(result.CaseID)
+	if loaded.Binding {
+		t.Fatal("stored deferred verdict should not be binding")
+	}
+}
+
 // Suppress unused import warnings
 var _ = fmt.Sprintf

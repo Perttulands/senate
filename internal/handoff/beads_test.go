@@ -3,6 +3,8 @@ package handoff
 import (
 	"context"
 	"errors"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -171,6 +173,80 @@ func TestTrimTo(t *testing.T) {
 		if got := trimTo(tt.input, tt.max); got != tt.want {
 			t.Errorf("trimTo(%q, %d) = %q, want %q", tt.input, tt.max, got, tt.want)
 		}
+	}
+}
+
+// --- CreateBeadFromVerdict ---
+
+func TestCreateBeadFromVerdict_BrNotFound(t *testing.T) {
+	// Set PATH to empty dir so br is not found
+	t.Setenv("PATH", t.TempDir())
+
+	v := core.Verdict{
+		CaseID:         "senate-br-missing",
+		FiledAt:        time.Now().UTC().Format(time.RFC3339),
+		VerdictAt:      time.Now().UTC().Format(time.RFC3339),
+		Type:           "general",
+		Summary:        "Test br not found",
+		Verdict:        core.DecisionApprove,
+		Reasoning:      "R",
+		Implementation: "I",
+		Binding:        true,
+		Judge:          "test",
+	}
+	_, err := CreateBeadFromVerdict(context.Background(), v)
+	if err == nil {
+		t.Fatal("expected error when br not found")
+	}
+	if !strings.Contains(err.Error(), "br CLI not found") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// --- defaultWorkspaceDir ---
+
+func TestDefaultWorkspaceDir_EnvSet(t *testing.T) {
+	t.Setenv("ATHENA_WORKSPACE", "/custom/workspace")
+	got := defaultWorkspaceDir()
+	if got != "/custom/workspace" {
+		t.Errorf("expected /custom/workspace, got %q", got)
+	}
+}
+
+func TestDefaultWorkspaceDir_EnvEmpty(t *testing.T) {
+	t.Setenv("ATHENA_WORKSPACE", "")
+	got := defaultWorkspaceDir()
+	if got == "" {
+		t.Error("expected non-empty default workspace dir")
+	}
+	// Should fallback to $HOME/workspace
+	home, err := os.UserHomeDir()
+	if err == nil {
+		if got != home+"/workspace" {
+			t.Errorf("expected %s/workspace, got %q", home, got)
+		}
+	}
+}
+
+func TestDefaultWorkspaceDir_WhitespaceEnv(t *testing.T) {
+	t.Setenv("ATHENA_WORKSPACE", "   ")
+	got := defaultWorkspaceDir()
+	if got == "   " {
+		t.Error("whitespace-only env should not be used")
+	}
+}
+
+// --- parseBeadID edge cases ---
+
+func TestParseBeadID_WhitespaceOnly(t *testing.T) {
+	if got := parseBeadID("   \n  \n  "); got != "" {
+		t.Fatalf("expected empty for whitespace, got %q", got)
+	}
+}
+
+func TestParseBeadID_SingleLineMatch(t *testing.T) {
+	if got := parseBeadID("athena-456"); got != "athena-456" {
+		t.Fatalf("expected athena-456, got %q", got)
 	}
 }
 

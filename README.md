@@ -82,6 +82,10 @@ senate handoff --case-id <id> [--workspace <path>]
 senate version
 ```
 
+## Dependencies
+
+Requires: `claude` CLI -- Senate spawns sub-agents via Claude Code's native `--agents` flag.
+
 ## Part of the Agora
 
 Senate was forged in **[Athena's Agora](https://github.com/Perttulands/athena-workspace)** — an autonomous coding system where AI agents build software and the hard decisions go through deliberation, not diktat.

@@ -184,9 +184,128 @@ func TestVerdictValidate_BadVerdictAtFormat(t *testing.T) {
 	}
 }
 
+func TestVerdictValidate_MissingFiledAt(t *testing.T) {
+	v := validVerdict()
+	v.FiledAt = ""
+	err := v.Validate()
+	if err == nil {
+		t.Fatal("expected error for missing filed_at")
+	}
+	if !strings.Contains(err.Error(), "verdict.filed_at") {
+		t.Fatalf("expected verdict.filed_at error, got: %v", err)
+	}
+}
+
+func TestVerdictValidate_BadFiledAtFormat(t *testing.T) {
+	v := validVerdict()
+	v.FiledAt = "2026-02-27"
+	err := v.Validate()
+	if err == nil {
+		t.Fatal("expected error for bad filed_at format")
+	}
+	if !strings.Contains(err.Error(), "verdict.filed_at must be RFC3339") {
+		t.Fatalf("expected RFC3339 error, got: %v", err)
+	}
+}
+
+func TestVerdictValidate_MissingVerdictAt(t *testing.T) {
+	v := validVerdict()
+	v.VerdictAt = ""
+	err := v.Validate()
+	if err == nil {
+		t.Fatal("expected error for missing verdict_at")
+	}
+	if !strings.Contains(err.Error(), "verdict.verdict_at") {
+		t.Fatalf("expected verdict.verdict_at error, got: %v", err)
+	}
+}
+
+func TestVerdictValidate_MissingType(t *testing.T) {
+	v := validVerdict()
+	v.Type = ""
+	err := v.Validate()
+	if err == nil {
+		t.Fatal("expected error for missing type")
+	}
+	if !strings.Contains(err.Error(), "verdict.type") {
+		t.Fatalf("expected verdict.type error, got: %v", err)
+	}
+}
+
+func TestVerdictValidate_MissingSummary(t *testing.T) {
+	v := validVerdict()
+	v.Summary = ""
+	err := v.Validate()
+	if err == nil {
+		t.Fatal("expected error for missing summary")
+	}
+	if !strings.Contains(err.Error(), "verdict.summary") {
+		t.Fatalf("expected verdict.summary error, got: %v", err)
+	}
+}
+
 func TestVerdictValidate_ValidPasses(t *testing.T) {
 	v := validVerdict()
 	if err := v.Validate(); err != nil {
 		t.Fatalf("expected valid verdict to pass, got: %v", err)
+	}
+}
+
+// ── Case validation edge cases ──────────────────────────────
+
+func TestCaseValidate_MissingFiledAt(t *testing.T) {
+	c := validCase()
+	c.FiledAt = ""
+	err := c.Validate()
+	if err == nil {
+		t.Fatal("expected error for missing filed_at")
+	}
+	if !strings.Contains(err.Error(), "case.filed_at") {
+		t.Fatalf("expected case.filed_at error, got: %v", err)
+	}
+}
+
+func TestCaseValidate_EmptyEvidence(t *testing.T) {
+	c := validCase()
+	c.Evidence = []string{"valid", "  "}
+	err := c.Validate()
+	if err == nil {
+		t.Fatal("expected error for empty evidence entry")
+	}
+	if !strings.Contains(err.Error(), "evidence") {
+		t.Fatalf("expected evidence error, got: %v", err)
+	}
+}
+
+// ── Normalize edge cases ────────────────────────────────────
+
+func TestNormalize_SetsDefaults(t *testing.T) {
+	c := Case{
+		Summary: "Only summary",
+	}
+	now := time.Now().UTC()
+	c.Normalize(now)
+	if c.ID == "" {
+		t.Error("ID should be set after normalize")
+	}
+	if c.Type != "general" {
+		t.Errorf("Type should default to general, got %q", c.Type)
+	}
+	if c.Question != "Only summary" {
+		t.Errorf("Question should default to summary, got %q", c.Question)
+	}
+	if c.FiledAt == "" {
+		t.Error("FiledAt should be set after normalize")
+	}
+}
+
+func TestNormalize_OnlyQuestion(t *testing.T) {
+	c := Case{
+		Question: "Only question",
+	}
+	now := time.Now().UTC()
+	c.Normalize(now)
+	if c.Summary != "Only question" {
+		t.Errorf("Summary should default to question, got %q", c.Summary)
 	}
 }
