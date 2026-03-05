@@ -104,6 +104,29 @@ type AskPosition struct {
 	KeyArgument string `json:"key_argument"`
 }
 
+// Executor runs the Claude CLI for a senate deliberation.
+// verdictFile is the path where the verdict JSON should be written.
+type Executor interface {
+	Run(question, model, promptFile, agentsJSON, verdictFile string) error
+}
+
+type execExecutor struct{}
+
+func (e execExecutor) Run(question, model, promptFile, agentsJSON, _ string) error {
+	cmd := exec.Command("claude", "-p",
+		"--dangerously-skip-permissions",
+		"--model", model,
+		"--system-prompt-file", promptFile,
+		"--agents", agentsJSON,
+	)
+	cmd.Stdin = strings.NewReader(question)
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// claudeExecutor is used by cmdAsk. Override in tests.
+var claudeExecutor Executor = execExecutor{}
+
 // cmdAsk runs a deliberation in pipe mode and returns JSON.
 func cmdAsk(args []string) int {
 	flags := parseFlags(args)
@@ -184,16 +207,7 @@ func cmdAsk(args []string) int {
 	fmt.Fprintf(os.Stderr, "senate: case %s\n", c.ID)
 
 	// Run Claude in pipe mode
-	cmd := exec.Command("claude", "-p",
-		"--dangerously-skip-permissions",
-		"--model", model,
-		"--system-prompt-file", promptFile,
-		"--agents", agentsJSON,
-	)
-	cmd.Stdin = strings.NewReader(question)
-	cmd.Stderr = os.Stderr // Show claude's progress on stderr
-
-	if err := cmd.Run(); err != nil {
+	if err := claudeExecutor.Run(question, model, promptFile, agentsJSON, verdictFile); err != nil {
 		errorf("claude: %v", err)
 		return 1
 	}

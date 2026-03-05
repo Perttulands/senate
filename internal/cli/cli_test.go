@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -1025,6 +1026,240 @@ func TestCmdAsk_WithQuestionButBadStoreDir(t *testing.T) {
 	code := cmdAsk([]string{"my question", "--state-dir", "/dev/null/impossible"})
 	if code != 1 {
 		t.Fatalf("expected exit 1 for bad store dir, got %d", code)
+	}
+}
+
+// --- fakeExecutor: test double for Claude CLI ---
+
+// fakeExecutor is a test double for the Claude CLI executor.
+type fakeExecutor struct {
+	verdictJSON string // if non-empty, written to verdictFile on Run
+	err         error  // if non-nil, returned from Run (simulates non-zero exit)
+}
+
+func (f *fakeExecutor) Run(_, _, _, _, verdictFile string) error {
+	if f.err != nil {
+		return f.err
+	}
+	if f.verdictJSON != "" {
+		return os.WriteFile(verdictFile, []byte(f.verdictJSON), 0644)
+	}
+	return nil
+}
+
+// withFakeExecutor sets the fake executor for the duration of a test.
+func withFakeExecutor(t *testing.T, fe *fakeExecutor) {
+	t.Helper()
+	old := claudeExecutor
+	claudeExecutor = fe
+	t.Cleanup(func() { claudeExecutor = old })
+}
+
+// --- cmdAsk with test double ---
+
+func TestCmdAsk_HappyPath(t *testing.T) {
+	stateDir := t.TempDir()
+
+	withFakeExecutor(t, &fakeExecutor{
+		verdictJSON: `{
+			"case_id": "senate-happy",
+			"verdict": "approved",
+			"reasoning": "Sound approach backed by evidence",
+			"implementation": "Proceed with Redis caching",
+			"dissent": "Minor concern about complexity",
+			"positions": [
+				{"senator": "pragmatist", "stance": "approved", "key_argument": "Ship it"},
+				{"senator": "skeptic", "stance": "amended", "key_argument": "Need monitoring"}
+			]
+		}`,
+	})
+
+	var code int
+	out := captureStdout(t, func() {
+		code = cmdAsk([]string{"Should we use Redis?", "--state-dir", stateDir})
+	})
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d", code)
+	}
+
+	// Verify JSON output to stdout
+	var result AskResult
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatalf("stdout not valid JSON: %v\nOutput: %s", err, out)
+	}
+	if result.Verdict != "approved" {
+		t.Errorf("verdict = %q, want approved", result.Verdict)
+	}
+	if len(result.Positions) != 2 {
+		t.Errorf("expected 2 positions, got %d", len(result.Positions))
+	}
+
+	// Verify verdict was stored
+	d, err := store.New(stateDir)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	entries, _ := os.ReadDir(filepath.Join(stateDir, "verdicts"))
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 verdict file, got %d", len(entries))
+	}
+	caseID := strings.TrimSuffix(entries[0].Name(), ".json")
+	loaded, err := d.LoadVerdict(caseID)
+	if err != nil {
+		t.Fatalf("load verdict: %v", err)
+	}
+	if loaded.Verdict != core.DecisionApprove {
+		t.Errorf("stored verdict = %q, want approved", loaded.Verdict)
+	}
+	if loaded.Reasoning != "Sound approach backed by evidence" {
+		t.Errorf("stored reasoning = %q", loaded.Reasoning)
+	}
+	if !loaded.Binding {
+		t.Error("approved verdict should be binding")
+	}
+
+	// Verify precedent was indexed
+	prec := precedent.New(d.PrecedentIndexPath())
+	results, err := prec.Search("Redis", precedent.SearchOptions{})
+	if err != nil {
+		t.Fatalf("precedent search: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("verdict should be searchable as precedent after indexing")
+	}
+}
+
+func TestCmdAsk_VerdictFileMissing(t *testing.T) {
+	stateDir := t.TempDir()
+
+	// Executor completes successfully but writes no verdict file
+	withFakeExecutor(t, &fakeExecutor{})
+
+	var code int
+	stderr := captureStderr(t, func() {
+		code = cmdAsk([]string{"Where is the verdict?", "--state-dir", stateDir})
+	})
+	if code != 1 {
+		t.Fatalf("expected exit 1, got %d", code)
+	}
+	if !strings.Contains(stderr, "verdict not written") {
+		t.Errorf("error should mention missing verdict, got: %q", stderr)
+	}
+}
+
+func TestCmdAsk_VerdictJSONMalformed(t *testing.T) {
+	stateDir := t.TempDir()
+
+	withFakeExecutor(t, &fakeExecutor{
+		verdictJSON: `{"verdict": "approved", INVALID JSON`,
+	})
+
+	var code int
+	stderr := captureStderr(t, func() {
+		code = cmdAsk([]string{"Bad JSON coming", "--state-dir", stateDir})
+	})
+	if code != 1 {
+		t.Fatalf("expected exit 1, got %d", code)
+	}
+	if !strings.Contains(stderr, "parse verdict") {
+		t.Errorf("error should mention parse failure, got: %q", stderr)
+	}
+}
+
+func TestCmdAsk_ClaudeExitsNonZero(t *testing.T) {
+	stateDir := t.TempDir()
+
+	withFakeExecutor(t, &fakeExecutor{
+		err: errors.New("exit status 1"),
+	})
+
+	var code int
+	stderr := captureStderr(t, func() {
+		code = cmdAsk([]string{"Claude will fail", "--state-dir", stateDir})
+	})
+	if code != 1 {
+		t.Fatalf("expected exit 1, got %d", code)
+	}
+	if !strings.Contains(stderr, "claude:") {
+		t.Errorf("error should mention claude, got: %q", stderr)
+	}
+}
+
+func TestCmdAsk_HandoffTriggeredForBindingVerdict(t *testing.T) {
+	stateDir := t.TempDir()
+
+	withFakeExecutor(t, &fakeExecutor{
+		verdictJSON: `{
+			"case_id": "senate-binding",
+			"verdict": "approved",
+			"reasoning": "Clear approval with strong consensus",
+			"implementation": "Implement the changes",
+			"positions": [{"senator": "pragmatist", "stance": "approved", "key_argument": "Go for it"}]
+		}`,
+	})
+
+	captureStdout(t, func() {
+		code := cmdAsk([]string{"Binding question", "--state-dir", stateDir, "--type", "rule_evolution"})
+		if code != 0 {
+			t.Fatalf("expected exit 0, got %d", code)
+		}
+	})
+
+	// Load the stored verdict and verify it's binding
+	// Handoff checks: !verdict.Binding || verdict.Verdict == DecisionDefer → skip
+	// So Binding=true + non-deferred → handoff creates a bead
+	d, _ := store.New(stateDir)
+	entries, _ := os.ReadDir(filepath.Join(stateDir, "verdicts"))
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 verdict file, got %d", len(entries))
+	}
+	caseID := strings.TrimSuffix(entries[0].Name(), ".json")
+	v, err := d.LoadVerdict(caseID)
+	if err != nil {
+		t.Fatalf("load verdict: %v", err)
+	}
+	if !v.Binding {
+		t.Fatal("approved verdict must be binding — handoff would not trigger")
+	}
+	if v.Verdict == core.DecisionDefer {
+		t.Fatal("approved verdict should not be deferred")
+	}
+}
+
+func TestCmdAsk_HandoffSkippedForDeferredVerdict(t *testing.T) {
+	stateDir := t.TempDir()
+
+	withFakeExecutor(t, &fakeExecutor{
+		verdictJSON: `{
+			"case_id": "senate-deferred",
+			"verdict": "deferred",
+			"reasoning": "Insufficient evidence to decide now",
+			"implementation": "",
+			"positions": [{"senator": "skeptic", "stance": "deferred", "key_argument": "Need more data"}]
+		}`,
+	})
+
+	captureStdout(t, func() {
+		code := cmdAsk([]string{"Deferred question", "--state-dir", stateDir})
+		if code != 0 {
+			t.Fatalf("expected exit 0, got %d", code)
+		}
+	})
+
+	// Load the stored verdict and verify it's NOT binding
+	// Handoff checks: !verdict.Binding → skip (no bead created)
+	d, _ := store.New(stateDir)
+	entries, _ := os.ReadDir(filepath.Join(stateDir, "verdicts"))
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 verdict file, got %d", len(entries))
+	}
+	caseID := strings.TrimSuffix(entries[0].Name(), ".json")
+	v, err := d.LoadVerdict(caseID)
+	if err != nil {
+		t.Fatalf("load verdict: %v", err)
+	}
+	if v.Binding {
+		t.Fatal("deferred verdict must not be binding — handoff would create unwanted beads")
 	}
 }
 
