@@ -80,7 +80,7 @@ This is the most important section.
 - Added: `TestVerdictPipelineRoundTrip` — simulates the complete post-deliberation workflow (parse verdict JSON -> build Verdict -> store -> load -> index as precedent -> search). This is the single highest-value test in the suite.
 - Added: `TestVerdictPipelineDeferredSkipsHandoff` — verifies the business rule that deferred verdicts are not binding and would not create handoff beads.
 - Added: CLI tests for cmdHealth, cmdHandoff (deferred, non-binding, JSON, dispatcher), cmdAsk error paths, cmdFileCase bad-store-dir
-- Added: Handoff tests for CreateBeadFromVerdict (br not found), defaultWorkspaceDir (env variants), parseBeadID edge cases, title format verification
+- Added: Handoff tests for explicit-workspace enforcement, parseBeadID edge cases, and title format verification
 - Added: Precedent tests for SearchRelevantPrecedent (type filter, empty keywords, limit), Record.Validate (all fields), LoadAll malformed lines, Add validation
 - Added: Core validation tests for all Verdict.Validate rejection paths, Case edge cases (missing filed_at, blank evidence), Normalize defaults
 - Added: Store tests for SaveCase/SaveVerdict validation errors, LoadCase/LoadVerdict corrupt JSON, path helpers

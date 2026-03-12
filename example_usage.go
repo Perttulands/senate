@@ -5,12 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 
 	"github.com/Perttulands/senate/internal/core"
 	"github.com/Perttulands/senate/internal/handoff"
 )
 
-// Example showing how to use CreateBeadFromVerdict with JSON input
+// Example showing how to use CreateBeadForVerdict with JSON input.
 func main() {
 	// Example verdict JSON as specified in requirements
 	verdictJSON := `{
@@ -36,14 +37,19 @@ func main() {
 	// Create context
 	ctx := context.Background()
 
-	// Call CreateBeadFromVerdict
-	beadID, err := handoff.CreateBeadFromVerdict(ctx, verdict)
+	workspaceDir := os.Getenv("ATHENA_WORKSPACE")
+	if workspaceDir == "" {
+		log.Fatal("ATHENA_WORKSPACE must point at the target beads workspace for this example")
+	}
+
+	// Call CreateBeadForVerdict with an explicit workspace.
+	res, err := handoff.CreateBeadForVerdict(ctx, nil, workspaceDir, verdict)
 	if err != nil {
 		log.Fatalf("Failed to create bead: %v", err)
 	}
 
 	// Success!
-	fmt.Printf("Successfully created bead with ID: %s\n", beadID)
+	fmt.Printf("Successfully created bead with ID: %s\n", res.BeadID)
 
 	// The created bead will have:
 	// - Title: "[truthsayer] Senate senate-001: Adjust monitoring alert thresholds for reduced noise"

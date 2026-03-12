@@ -3,9 +3,7 @@ package handoff
 import (
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -46,7 +44,7 @@ func CreateBeadForVerdict(ctx context.Context, runner Runner, workspaceDir strin
 		return Result{Status: "skipped"}, nil
 	}
 	if workspaceDir == "" {
-		workspaceDir = defaultWorkspaceDir()
+		return Result{}, fmt.Errorf("workspace dir is required")
 	}
 
 	target := inferTargetSystem(verdict.Type)
@@ -109,26 +107,9 @@ func trimTo(s string, max int) string {
 	return string(r[:max-1]) + "..."
 }
 
-func defaultWorkspaceDir() string {
-	if ws := strings.TrimSpace(os.Getenv("ATHENA_WORKSPACE")); ws != "" {
-		return ws
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return filepath.FromSlash("workspace")
-	}
-	return filepath.Join(home, "workspace")
-}
-
-// CreateBeadFromVerdict creates a Beads issue from a verdict.
-// This is an alias for CreateBeadForVerdict to match the requested function name.
+// CreateBeadFromVerdict is a compatibility shim that now fails fast.
+// Call CreateBeadForVerdict with an explicit workspace dir instead.
 func CreateBeadFromVerdict(ctx context.Context, verdict core.Verdict) (string, error) {
-	// Check if br CLI exists
-	if _, err := exec.LookPath("br"); err != nil {
-		return "", fmt.Errorf("br CLI not found: %w", err)
-	}
-
-	// Use the existing implementation
 	result, err := CreateBeadForVerdict(ctx, nil, "", verdict)
 	if err != nil {
 		return "", err

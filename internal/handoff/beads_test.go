@@ -3,7 +3,6 @@ package handoff
 import (
 	"context"
 	"errors"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -99,7 +98,7 @@ func TestCreateBeadForVerdictUnparsableID(t *testing.T) {
 	}
 }
 
-func TestCreateBeadForVerdictDefaultWorkspace(t *testing.T) {
+func TestCreateBeadForVerdictRequiresWorkspace(t *testing.T) {
 	r := &fakeRunner{out: "pol-abc\n"}
 	v := core.Verdict{
 		Binding:        true,
@@ -113,15 +112,12 @@ func TestCreateBeadForVerdictDefaultWorkspace(t *testing.T) {
 		FiledAt:        time.Now().UTC().Format(time.RFC3339),
 		VerdictAt:      time.Now().UTC().Format(time.RFC3339),
 	}
-	res, err := CreateBeadForVerdict(context.Background(), r, "", v)
-	if err != nil {
+	_, err := CreateBeadForVerdict(context.Background(), r, "", v)
+	if err == nil {
+		t.Fatal("expected explicit workspace error")
+	}
+	if !strings.Contains(err.Error(), "workspace dir is required") {
 		t.Fatalf("unexpected error: %v", err)
-	}
-	if res.BeadID != "pol-abc" {
-		t.Fatalf("expected pol-abc, got %q", res.BeadID)
-	}
-	if r.dir == "" {
-		t.Fatal("expected workspace dir to be set by default")
 	}
 }
 
@@ -179,9 +175,6 @@ func TestTrimTo(t *testing.T) {
 // --- CreateBeadFromVerdict ---
 
 func TestCreateBeadFromVerdict_BrNotFound(t *testing.T) {
-	// Set PATH to empty dir so br is not found
-	t.Setenv("PATH", t.TempDir())
-
 	v := core.Verdict{
 		CaseID:         "senate-br-missing",
 		FiledAt:        time.Now().UTC().Format(time.RFC3339),
@@ -196,43 +189,10 @@ func TestCreateBeadFromVerdict_BrNotFound(t *testing.T) {
 	}
 	_, err := CreateBeadFromVerdict(context.Background(), v)
 	if err == nil {
-		t.Fatal("expected error when br not found")
+		t.Fatal("expected explicit workspace error")
 	}
-	if !strings.Contains(err.Error(), "br CLI not found") {
+	if !strings.Contains(err.Error(), "workspace dir is required") {
 		t.Errorf("unexpected error: %v", err)
-	}
-}
-
-// --- defaultWorkspaceDir ---
-
-func TestDefaultWorkspaceDir_EnvSet(t *testing.T) {
-	t.Setenv("ATHENA_WORKSPACE", "/custom/workspace")
-	got := defaultWorkspaceDir()
-	if got != "/custom/workspace" {
-		t.Errorf("expected /custom/workspace, got %q", got)
-	}
-}
-
-func TestDefaultWorkspaceDir_EnvEmpty(t *testing.T) {
-	t.Setenv("ATHENA_WORKSPACE", "")
-	got := defaultWorkspaceDir()
-	if got == "" {
-		t.Error("expected non-empty default workspace dir")
-	}
-	// Should fallback to $HOME/workspace
-	home, err := os.UserHomeDir()
-	if err == nil {
-		if got != home+"/workspace" {
-			t.Errorf("expected %s/workspace, got %q", home, got)
-		}
-	}
-}
-
-func TestDefaultWorkspaceDir_WhitespaceEnv(t *testing.T) {
-	t.Setenv("ATHENA_WORKSPACE", "   ")
-	got := defaultWorkspaceDir()
-	if got == "   " {
-		t.Error("whitespace-only env should not be used")
 	}
 }
 
