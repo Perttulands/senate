@@ -375,8 +375,8 @@ This architecture transforms Senate from simulated stances to real LLM deliberat
 ### Example Usage Flow
 
 ```bash
-# 1. File a case
-senate deliberate --case ./cases/relax-rule-TS-042.json
+# 1. Ask the senate
+senate ask "Should Truthsayer rule TS-042 be relaxed?" --type rule_evolution
 
 # 2. System spawns 3 senators (pragmatist, purist, skeptic)
 # 3. Each provides initial position via Claude Opus
