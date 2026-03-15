@@ -210,6 +210,18 @@ func TestParseBeadID_SingleLineMatch(t *testing.T) {
 	}
 }
 
+func TestParseBeadID_DottedChild(t *testing.T) {
+	if got := parseBeadID("pol-10j3.6"); got != "pol-10j3.6" {
+		t.Fatalf("expected pol-10j3.6, got %q", got)
+	}
+}
+
+func TestParseBeadID_DottedMultiSegment(t *testing.T) {
+	if got := parseBeadID("Created: pol-abc.1.2\n"); got != "pol-abc.1.2" {
+		t.Fatalf("expected pol-abc.1.2, got %q", got)
+	}
+}
+
 func TestCreateBeadForVerdictTitleFormat(t *testing.T) {
 	r := &fakeRunner{out: "athena-title\n"}
 	v := core.Verdict{

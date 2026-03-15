@@ -107,13 +107,13 @@ type AskPosition struct {
 // Executor runs the Claude CLI for a senate deliberation.
 // verdictFile is the path where the verdict JSON should be written.
 type Executor interface {
-	Run(question, model, promptFile, agentsJSON, verdictFile string) error
+	Run(ctx context.Context, question, model, promptFile, agentsJSON, verdictFile string) error
 }
 
 type execExecutor struct{}
 
-func (e execExecutor) Run(question, model, promptFile, agentsJSON, _ string) error {
-	cmd := exec.Command("claude", "-p",
+func (e execExecutor) Run(ctx context.Context, question, model, promptFile, agentsJSON, _ string) error {
+	cmd := exec.CommandContext(ctx, "claude", "-p",
 		"--dangerously-skip-permissions",
 		"--model", model,
 		"--system-prompt-file", promptFile,
@@ -121,7 +121,11 @@ func (e execExecutor) Run(question, model, promptFile, agentsJSON, _ string) err
 	)
 	cmd.Stdin = strings.NewReader(question)
 	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	err := cmd.Run()
+	if ctx.Err() == context.DeadlineExceeded {
+		return fmt.Errorf("deliberation timed out (use --timeout to increase)")
+	}
+	return err
 }
 
 // claudeExecutor is used by cmdAsk. Override in tests.
@@ -131,6 +135,8 @@ var claudeExecutor Executor = execExecutor{}
 func cmdAsk(args []string) int {
 	flags := parseFlags(args)
 	agents := parseInt(flags["agents"], 3)
+	timeout := parseInt(flags["timeout"], 300)
+	dryRun := flags["dry-run"] == "true"
 	caseType := strings.TrimSpace(flags["type"])
 	if caseType == "" {
 		caseType = "general"
@@ -206,8 +212,19 @@ func cmdAsk(args []string) int {
 	fmt.Fprintf(os.Stderr, "senate: deliberating with %d agents (%s)...\n", agents, senatorLabel(agents))
 	fmt.Fprintf(os.Stderr, "senate: case %s\n", c.ID)
 
-	// Run Claude in pipe mode
-	if err := claudeExecutor.Run(question, model, promptFile, agentsJSON, verdictFile); err != nil {
+	if dryRun {
+		fmt.Fprintf(os.Stderr, "senate: dry-run — case created, protocol written, skipping Claude invocation\n")
+		result := map[string]string{"case_id": c.ID, "protocol": promptFile, "status": "dry-run"}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(result)
+		return 0
+	}
+
+	// Run Claude in pipe mode with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+	defer cancel()
+	if err := claudeExecutor.Run(ctx, question, model, promptFile, agentsJSON, verdictFile); err != nil {
 		errorf("claude: %v", err)
 		return 1
 	}
@@ -473,7 +490,16 @@ func cmdHandoff(args []string) int {
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
 
-	res, err := handoff.CreateBeadForVerdict(ctx, nil, flags["workspace"], v)
+	workspace := strings.TrimSpace(flags["workspace"])
+	if workspace == "" {
+		workspace, err = os.Getwd()
+		if err != nil {
+			errorf("resolve workspace: %v", err)
+			return 1
+		}
+	}
+
+	res, err := handoff.CreateBeadForVerdict(ctx, nil, workspace, v)
 	if err != nil {
 		errorf("handoff: %v", err)
 		return 1
@@ -653,6 +679,8 @@ ASK FLAGS:
   --filed-by <name>      Who is asking (default: "agent")
   --model <model>        Moderator model (default: sonnet)
   --state-dir <path>     Override state root
+  --timeout <seconds>    Deliberation timeout (default: 300)
+  --dry-run              Create case and protocol without invoking Claude
 
 START FLAGS:
   --agents <n>           Number of senators (default 3, max 5)

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -885,6 +886,66 @@ func TestCmdHealth_Verbose(t *testing.T) {
 
 // --- cmdHandoff extended ---
 
+func TestCmdHandoff_WorkspaceFallbackToGetwd(t *testing.T) {
+	stateDir := t.TempDir()
+	d, _ := store.New(stateDir)
+	now := time.Now().UTC()
+	v := core.Verdict{
+		CaseID:    "senate-ws-fallback",
+		FiledAt:   now.Format(time.RFC3339),
+		VerdictAt: now.Format(time.RFC3339),
+		Type:      "general",
+		Summary:   "Test workspace fallback",
+		Verdict:   core.DecisionDefer,
+		Reasoning: "R",
+		Judge:     "test",
+		Binding:   true,
+	}
+	d.SaveVerdict(v)
+
+	// No --workspace flag: cmdHandoff should use os.Getwd() fallback, not error
+	var code int
+	out := captureStdout(t, func() {
+		code = cmdHandoff([]string{"--case-id", "senate-ws-fallback", "--state-dir", stateDir})
+	})
+	// Deferred verdict → skipped (no bead), but the point is it shouldn't
+	// error due to empty workspace since os.Getwd() is used as fallback
+	if code != 0 {
+		t.Fatalf("expected exit 0 (deferred=skipped), got %d", code)
+	}
+	if !strings.Contains(out, "skipped") {
+		t.Errorf("expected 'skipped', got %q", out)
+	}
+}
+
+func TestCmdHandoff_BindingVerdictUsesGetwdWhenNoWorkspaceFlag(t *testing.T) {
+	stateDir := t.TempDir()
+	d, _ := store.New(stateDir)
+	now := time.Now().UTC()
+	v := core.Verdict{
+		CaseID:    "senate-ws-bind",
+		FiledAt:   now.Format(time.RFC3339),
+		VerdictAt: now.Format(time.RFC3339),
+		Type:      "general",
+		Summary:   "Binding verdict workspace test",
+		Verdict:   core.DecisionApprove,
+		Reasoning: "R",
+		Implementation: "I",
+		Judge:     "test",
+		Binding:   true,
+	}
+	d.SaveVerdict(v)
+
+	// No --workspace flag: should NOT error with "workspace dir is required".
+	// It may error because br is not installed in test, but that's a different error.
+	stderr := captureStderr(t, func() {
+		cmdHandoff([]string{"--case-id", "senate-ws-bind", "--state-dir", stateDir})
+	})
+	if strings.Contains(stderr, "workspace dir is required") {
+		t.Fatal("cmdHandoff should fallback to os.Getwd() when --workspace is not provided, not fail with 'workspace dir is required'")
+	}
+}
+
 func TestCmdHandoff_DeferredVerdict(t *testing.T) {
 	stateDir := t.TempDir()
 	d, _ := store.New(stateDir)
@@ -1037,7 +1098,7 @@ type fakeExecutor struct {
 	err         error  // if non-nil, returned from Run (simulates non-zero exit)
 }
 
-func (f *fakeExecutor) Run(_, _, _, _, verdictFile string) error {
+func (f *fakeExecutor) Run(_ context.Context, _, _, _, _, verdictFile string) error {
 	if f.err != nil {
 		return f.err
 	}

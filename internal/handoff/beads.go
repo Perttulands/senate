@@ -10,7 +10,7 @@ import (
 	"github.com/Perttulands/senate/internal/core"
 )
 
-var beadIDPattern = regexp.MustCompile(`([A-Za-z0-9]+-[A-Za-z0-9][A-Za-z0-9-]*)`)
+var beadIDPattern = regexp.MustCompile(`([A-Za-z0-9]+-[A-Za-z0-9][A-Za-z0-9-]*(?:\.[A-Za-z0-9]+)*)`)
 
 // Runner executes external commands (br create).
 type Runner interface {
