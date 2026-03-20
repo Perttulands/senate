@@ -96,7 +96,7 @@ func TestBuildAgentsJSON_PromptContainsSenatorIdentity(t *testing.T) {
 	if err := json.Unmarshal([]byte(result), &agents); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
 	}
-	agent := agents["senator-pragmatist"]
+	agent := agents["senator-musk"]
 	if !strings.Contains(agent.Prompt, senatorCatalog[0].FullName) {
 		t.Error("prompt should contain senator full name")
 	}
@@ -173,7 +173,7 @@ func TestSenatorNames_ValidN(t *testing.T) {
 	if len(names) != 3 {
 		t.Fatalf("expected 3 names, got %d", len(names))
 	}
-	expected := []string{"pragmatist", "purist", "skeptic"}
+	expected := []string{"musk", "jobs", "sokrates"}
 	for i, want := range expected {
 		if names[i] != want {
 			t.Errorf("names[%d]=%q, want %q", i, names[i], want)
@@ -266,14 +266,14 @@ func TestVerdictPath(t *testing.T) {
 
 func TestSenatorLabel(t *testing.T) {
 	label := senatorLabel(3)
-	if !strings.Contains(label, "pragmatist") {
-		t.Error("label should contain pragmatist")
+	if !strings.Contains(label, "musk") {
+		t.Error("label should contain musk")
 	}
-	if !strings.Contains(label, "purist") {
-		t.Error("label should contain purist")
+	if !strings.Contains(label, "jobs") {
+		t.Error("label should contain jobs")
 	}
-	if !strings.Contains(label, "skeptic") {
-		t.Error("label should contain skeptic")
+	if !strings.Contains(label, "sokrates") {
+		t.Error("label should contain sokrates")
 	}
 	// Should be comma-separated
 	parts := strings.Split(label, ", ")
@@ -284,8 +284,8 @@ func TestSenatorLabel(t *testing.T) {
 
 func TestSenatorLabel_Single(t *testing.T) {
 	label := senatorLabel(1)
-	if label != "pragmatist" {
-		t.Errorf("expected 'pragmatist', got %q", label)
+	if label != "musk" {
+		t.Errorf("expected 'musk', got %q", label)
 	}
 }
 
